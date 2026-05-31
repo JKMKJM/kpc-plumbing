@@ -2071,9 +2071,12 @@ async function saveWO(){
     // Auto-add to calendar if appointment date set
     if(data.appt_date)addWOToCalendar(data);
 
-    // Auto-add to schedule using start_date
-    if(data.start_date){
+    // Auto-add to schedule using appt_date (when job is scheduled)
+    if(data.appt_date){
       await addWOToSchedule(data);
+    } else if(data.wo_date){
+      // Fall back to WO date if no appointment date
+      await addWOToSchedule({...data, appt_date:data.wo_date});
     }
 
     const errB=document.getElementById('wo-error-banner');
@@ -2090,11 +2093,13 @@ async function saveWO(){
 
 async function addWOToSchedule(data){
   try{
+    const schedDate=data.appt_date||data.wo_date;
+    if(!schedDate)return;
     const title=(data.requested_by||'Job')+(data.swo_num?' - SWO '+data.swo_num:'');
     // Check if already on schedule for this date/wo
     const{data:existing}=await sb.from('schedules')
       .select('id')
-      .eq('schedule_date',data.start_date)
+      .eq('schedule_date',schedDate)
       .eq('wo_num',data.wo_num);
 
     if(existing&&existing.length>0){
@@ -2116,7 +2121,7 @@ async function addWOToSchedule(data){
       // Insert new schedule entry
       await sb.from('schedules').insert({
         job_title:title,
-        schedule_date:data.start_date,
+        schedule_date:schedDate,
         technician:data.assigned_to||'',
         customer_name:data.requested_by||'',
         address:data.address||'',
@@ -3598,12 +3603,43 @@ async function saveScheduleEntry(){
       await sb.from('schedules').insert(data);
     }
     setSyncStatus('ok');
+
+    // Also add/update on calendar
+    try{
+      const calData={
+        title:title+(data.customer_name?' — '+data.customer_name:''),
+        event_date:date,
+        start_time:data.start_time||'',
+        end_time:data.end_time||'',
+        technician:data.technician||'',
+        customer_name:data.customer_name||'',
+        address:data.address||'',
+        phone:data.phone||'',
+        event_type:data.job_type||'job',
+        notes:data.notes||'',
+        color:data.color||'#1a5fa8'
+      };
+      // Check if already on calendar for this schedule entry
+      if(editingScheduleId){
+        // Try to update existing calendar event
+        const{data:existing}=await sb.from('calendar_events')
+          .select('id').eq('event_date',date).eq('title',calData.title).limit(1);
+        if(existing&&existing.length>0){
+          await sb.from('calendar_events').update(calData).eq('id',existing[0].id);
+        } else {
+          await sb.from('calendar_events').insert(calData);
+        }
+      } else {
+        await sb.from('calendar_events').insert(calData);
+      }
+    }catch(calErr){console.error('Calendar sync error:',calErr);}
+
     closeSchedModal();
     // Switch to the date of the saved job so it's visible
     scheduleDate=date;
     document.getElementById('sched-date').value=date;
     await fetchSchedule();
-    toast('Schedule saved! 📅');
+    toast('Schedule saved & added to calendar! 📅');
   }catch(e){
     setSyncStatus('error');
     toast('Save failed: '+e.message);
