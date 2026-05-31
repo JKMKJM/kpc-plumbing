@@ -2279,7 +2279,7 @@ function renderWOList(wos){
         <div style="margin-top:4px">
           <span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;color:white;background:${WO_STATUS_COLORS[wo.wo_status||'open']||'#f59e0b'}">${WO_STATUS_LABELS[wo.wo_status||'open']||'🟡 Open'}</span>
         </div>
-        <div class="saved-meta" style="margin-top:3px">${wo.assigned_to?wo.assigned_to+' · ':''}${wo.wo_date||new Date(wo.created_at).toLocaleDateString()}${wo.swo_num?' · SWO '+wo.swo_num:''}${wo.requester_phone?' · <a href="tel:'+wo.requester_phone.replace(/\D/g,'')+'" style="color:#1a5fa8;text-decoration:none">📞 '+wo.requester_phone+'</a>':''}</div>
+        <div class="saved-meta" style="margin-top:3px">${wo.assigned_to?wo.assigned_to+' · ':''}${wo.appt_date?'📅 Appt: '+wo.appt_date:'No appt date'}${wo.swo_num?' · SWO '+wo.swo_num:''}${wo.requester_phone?' · <a href="tel:'+wo.requester_phone.replace(/\D/g,'')+'" style="color:#1a5fa8;text-decoration:none">📞 '+wo.requester_phone+'</a>':''}</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
         <button onclick="quickStatusWO(event,'${wo.id}','${wo.wo_status||'open'}')" style="background:#e8f4fd;border:none;border-radius:8px;padding:5px 8px;cursor:pointer;font-size:12px;color:#1a5fa8;font-weight:600;white-space:nowrap">Status</button>
