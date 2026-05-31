@@ -114,6 +114,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .est-banner{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#92400e;font-weight:500;text-align:center}
 .pg-form-card{background:#e8f4fd;border:1px solid #bfdbfe;border-radius:12px;padding:14px;margin-bottom:12px}
 
+/* Tappable phone numbers */
+a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
+.phone-link{color:#1a5fa8;text-decoration:none;font-weight:600}
+.phone-link:hover{text-decoration:underline}
+
 /* Waiting on parts flash */
 @keyframes flashParts {
   0%,100%{background:#fff7ed;border-color:#ea580c;box-shadow:0 0 0 0 rgba(234,88,12,0)}
@@ -254,7 +259,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="pick-customer-btn" onclick="openPickCustomer()">👥 Pick from Customer List</button>
       <div class="field"><label>Client name</label><input type="text" id="client-name" placeholder="Customer or company"></div>
       <div class="field"><label>Email</label><input type="email" id="client-email" placeholder="customer@email.com"></div>
-      <div class="field"><label>Phone</label><input type="tel" id="client-phone" placeholder="Phone number"></div>
+      <div class="field"><label>Phone <span id="client-phone-call" style="display:none"><a id="client-phone-link" href="#" style="color:#1a5fa8;font-size:12px;font-weight:600;text-decoration:none">📞 Tap to call</a></span></label><input type="tel" id="client-phone" placeholder="Phone number" oninput="updatePhoneLink(this.value)"></div>
       <div class="field"><label>Address</label><textarea id="client-addr" style="min-height:44px"></textarea></div>
     </div>
 
@@ -484,7 +489,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <div class="card-title" style="margin-bottom:0">All Technicians</div>
-        <button onclick="fetchAllTechEntries()" style="background:#e8f4fd;border:none;border-radius:8px;padding:5px 10px;font-size:12px;color:#1a5fa8;font-weight:600;cursor:pointer;font-family:inherit">Load All</button>
+        <div style="display:flex;gap:6px">
+          <button onclick="fetchAllTechEntries()" style="background:#e8f4fd;border:none;border-radius:8px;padding:5px 10px;font-size:12px;color:#1a5fa8;font-weight:600;cursor:pointer;font-family:inherit">Load All</button>
+          <button onclick="exportPayrollPDF()" style="background:#0d9e6e;color:white;border:none;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">⬇ Payroll PDF</button>
+        </div>
       </div>
       <div id="ts-owner-view"></div>
     </div>
@@ -524,6 +532,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
       <button class="btn btn-outline" onclick="changeschedDay(-1)">‹ Previous Day</button>
       <button class="btn btn-outline" onclick="changeschedDay(1)">Next Day ›</button>
+    </div>
+
+    <!-- All upcoming jobs -->
+    <div class="card" style="margin-top:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div class="card-title" style="margin-bottom:0">All Upcoming Jobs</div>
+        <button onclick="loadAllScheduled()" style="background:#e8f4fd;border:none;border-radius:8px;padding:5px 10px;font-size:12px;color:#1a5fa8;font-weight:600;cursor:pointer;font-family:inherit">Load All</button>
+      </div>
+      <div id="sched-all-list"><div style="font-size:13px;color:#94a3b8;text-align:center;padding:16px">Tap Load All to see all scheduled jobs</div></div>
     </div>
   </div>
 
@@ -619,7 +636,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="field"><label>Requested By</label><input type="text" id="wo-requested-by" placeholder="Name"></div>
       <div class="row">
         <div class="field"><label>Department</label><input type="text" id="wo-department" placeholder="Dept."></div>
-        <div class="field"><label>Phone</label><input type="tel" id="wo-req-phone" placeholder="Phone"></div>
+        <div class="field"><label>Phone <span id="wo-phone-call" style="display:none"><a id="wo-phone-link" href="#" style="color:#1a5fa8;font-size:12px;font-weight:600;text-decoration:none">📞 Tap to call</a></span></label><input type="tel" id="wo-req-phone" placeholder="Phone" oninput="updateWOPhoneLink(this.value)"></div>
       </div>
       <div class="field"><label>Email</label><input type="email" id="wo-req-email" placeholder="email@example.com"></div>
     </div>
@@ -735,6 +752,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       </div>
     </div>
 
+    <div id="wo-error-banner" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:13px;font-weight:600;color:#dc2626"></div>
+
     <div class="action-row">
       <button class="btn btn-save" onclick="saveWO()">☁ Save & Sync</button>
       <button class="btn btn-pdf" onclick="exportWOPDF()">⬇ PDF</button>
@@ -757,6 +776,51 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
   </div>
 
+
+
+  <!-- SETTINGS TAB -->
+  <div id="tab-settings" class="content" style="display:none">
+    <div class="card">
+      <div class="card-title">Technician Names</div>
+      <p style="font-size:13px;color:#64748b;margin-bottom:12px">Set your technician names here — they update everywhere in the app automatically.</p>
+      <div class="field">
+        <label>Technician 1 (Owner)</label>
+        <input type="text" id="tech-1-name" value="Jonathan McKay" style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#f1f5f9;color:#94a3b8;font-family:inherit" readonly>
+        <div style="font-size:11px;color:#94a3b8;margin-top:3px">Owner name is fixed</div>
+      </div>
+      <div class="field">
+        <label>Technician 2</label>
+        <input type="text" id="tech-2-name" placeholder="Enter technician name..." style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit">
+      </div>
+      <div class="field">
+        <label>Technician 3</label>
+        <input type="text" id="tech-3-name" placeholder="Enter technician name..." style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit">
+      </div>
+      <div class="field">
+        <label>Technician 4</label>
+        <input type="text" id="tech-4-name" placeholder="Enter technician name..." style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit">
+      </div>
+      <button class="pg-main-btn" onclick="saveTechNames()">💾 Save Technician Names</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Business Info</div>
+      <p style="font-size:13px;color:#64748b;margin-bottom:12px">These pre-fill on every new invoice and work order.</p>
+      <div class="field"><label>Business Name</label><input type="text" id="setting-biz-name" placeholder="KPC Plumbing" style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit"></div>
+      <div class="field"><label>Phone</label><input type="text" id="setting-biz-phone" placeholder="409.553.9241" style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit"></div>
+      <div class="field"><label>Email</label><input type="email" id="setting-biz-email" placeholder="your@email.com" style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit"></div>
+      <div class="field"><label>Address</label><textarea id="setting-biz-addr" placeholder="Address, City, State, Zip" style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit;resize:vertical;min-height:60px"></textarea></div>
+      <button class="pg-main-btn" onclick="saveBizSettings()">💾 Save Business Info</button>
+    </div>
+    <div class="card">
+      <div class="card-title">App Info</div>
+      <div style="font-size:13px;color:#64748b;line-height:1.8">
+        <div>📱 <strong>KPC Plumbing Invoice Manager</strong></div>
+        <div>🔧 Licensed · Bonded · Insured</div>
+        <div>📞 409.553.9241</div>
+        <div style="margin-top:8px;font-size:11px;color:#94a3b8">© 2025 KPC Plumbing. All rights reserved.</div>
+      </div>
+    </div>
+  </div>
 
 <!-- Email modal -->
 <div class="modal-bg" id="email-modal">
@@ -1444,6 +1508,7 @@ function loadDoc(id){
   const checkField=document.getElementById('check-num-field');
   if(checkField)checkField.style.display=payMethod==='check'?'block':'none';
   renderItems();renderPhotos();showTab('doc');
+  setTimeout(refreshPhoneLinks,100);
   toast('Loaded — editing existing record');
 }
 
@@ -1471,7 +1536,7 @@ function renderCustomerList(custs){
     <div class="cust-card">
       <div style="flex:1;cursor:pointer" onclick="useCustomer('${cu.id}')">
         <div class="cust-name">${cu.name||''}</div>
-        <div class="cust-meta">${[cu.phone,cu.email].filter(Boolean).join(' · ')}</div>
+        <div class="cust-meta">${cu.phone?`<a href="tel:${cu.phone.replace(/\D/g,'')}" style="color:#1a5fa8;text-decoration:none">📞 ${cu.phone}</a>`:''} ${cu.email?'· '+cu.email:''}</div>
       </div>
       <div class="cust-actions">
         <button class="icon-btn" onclick="editCustomer('${cu.id}')" title="Edit">✏️</button>
@@ -1503,7 +1568,7 @@ function filterPickList(){
     <div class="cust-card" onclick="pickCustomer('${cu.id}')">
       <div>
         <div class="cust-name">${cu.name||''}</div>
-        <div class="cust-meta">${[cu.phone,cu.email].filter(Boolean).join(' · ')}</div>
+        <div class="cust-meta">${cu.phone?`<a href="tel:${cu.phone.replace(/\D/g,'')}" style="color:#1a5fa8;text-decoration:none">📞 ${cu.phone}</a>`:''} ${cu.email?'· '+cu.email:''}</div>
       </div>
     </div>`).join('');
 }
@@ -1976,16 +2041,29 @@ function getWOForm(){
 async function saveWO(){
   setSyncStatus('syncing');
   const data=getWOForm();
+
+  // Strip large photo data to prevent payload too large errors
+  // Photos are stored locally only for now
+  const saveData={...data};
+  if(saveData.wo_photos&&saveData.wo_photos.length>0){
+    // Only save photo count, not actual data
+    saveData.wo_photos=[];
+  }
+
+  // Also check if tech_signature or supervisor_signature are too large
+  if(saveData.tech_signature&&saveData.tech_signature.length>50000)saveData.tech_signature='';
+  if(saveData.supervisor_signature&&saveData.supervisor_signature.length>50000)saveData.supervisor_signature='';
+
   try{
     let result;
     if(currentWOId){
-      result=await sb.from('work_orders').update(data).eq('id',currentWOId).select();
+      result=await sb.from('work_orders').update(saveData).eq('id',currentWOId).select();
     } else {
-      result=await sb.from('work_orders').insert(data).select();
+      result=await sb.from('work_orders').insert(saveData).select();
     }
     if(result.error){
       console.error('Supabase error:',result.error);
-      throw new Error(result.error.message||'Save failed');
+      throw new Error(result.error.message||'Save failed — '+result.error.message);
     }
     if(result.data&&result.data[0])currentWOId=result.data[0].id;
     setSyncStatus('ok');
@@ -1993,14 +2071,18 @@ async function saveWO(){
     // Auto-add to calendar if appointment date set
     if(data.appt_date)addWOToCalendar(data);
 
-    // Auto-add to schedule using start_date (when work order was received/starts)
+    // Auto-add to schedule using start_date
     if(data.start_date){
       await addWOToSchedule(data);
     }
 
+    const errB=document.getElementById('wo-error-banner');
+    if(errB)errB.style.display='none';
     toast('Work order saved & synced! ☁');
   }catch(e){
     setSyncStatus('error');
+    const errBanner=document.getElementById('wo-error-banner');
+    if(errBanner){errBanner.style.display='block';errBanner.textContent='❌ Save failed: '+e.message;}
     toast('Save failed: '+e.message);
     console.error('saveWO error:',e);
   }
@@ -2192,7 +2274,7 @@ function renderWOList(wos){
         <div style="margin-top:4px">
           <span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;color:white;background:${WO_STATUS_COLORS[wo.wo_status||'open']||'#f59e0b'}">${WO_STATUS_LABELS[wo.wo_status||'open']||'🟡 Open'}</span>
         </div>
-        <div class="saved-meta" style="margin-top:3px">${wo.assigned_to?wo.assigned_to+' · ':''}${wo.wo_date||new Date(wo.created_at).toLocaleDateString()}${wo.swo_num?' · SWO '+wo.swo_num:''}</div>
+        <div class="saved-meta" style="margin-top:3px">${wo.assigned_to?wo.assigned_to+' · ':''}${wo.wo_date||new Date(wo.created_at).toLocaleDateString()}${wo.swo_num?' · SWO '+wo.swo_num:''}${wo.requester_phone?' · <a href="tel:'+wo.requester_phone.replace(/\D/g,'')+'" style="color:#1a5fa8;text-decoration:none">📞 '+wo.requester_phone+'</a>':''}</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
         <button onclick="quickStatusWO(event,'${wo.id}','${wo.wo_status||'open'}')" style="background:#e8f4fd;border:none;border-radius:8px;padding:5px 8px;cursor:pointer;font-size:12px;color:#1a5fa8;font-weight:600;white-space:nowrap">Status</button>
@@ -3427,7 +3509,7 @@ function renderSchedule(){
             ${job.customer_name?' · '+job.customer_name:''}
           </div>
           ${job.address?`<div style="font-size:11px;color:#94a3b8">📍 ${job.address}</div>`:''}
-          ${job.phone?`<div style="font-size:11px;color:#94a3b8">📞 ${job.phone}</div>`:''}
+          ${job.phone?`<div style="font-size:11px;color:#1a5fa8"><a href="tel:${job.phone.replace(/\D/g,'')}" style="color:#1a5fa8;text-decoration:none">📞 ${job.phone}</a></div>`:''}
           ${job.notes?`<div style="font-size:11px;color:#94a3b8;margin-top:3px">${job.notes}</div>`:''}
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;margin-left:8px;flex-shrink:0">
@@ -3741,6 +3823,263 @@ window.addEventListener('load',()=>{
   updateAllTechDropdowns();
   applyBizSettings();
 });
+
+
+// ---- Payroll PDF Report ----
+async function exportPayrollPDF(){
+  // Make sure we have all tech entries loaded
+  if(!timeEntries.length){
+    await fetchAllTechEntries();
+  }
+
+  const week=document.getElementById('ts-week-start').value||tsWeekStart;
+  const weekEnd=getWeekEnd(week);
+  const yr=new Date().getFullYear();
+
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:'pt',format:'letter'});
+  const ac=[26,95,168];const bg=[240,246,255];
+  const lm=40;const pw=532;const r=lm+pw;
+  let y=50;
+
+  // Header
+  doc.setFillColor(...bg);doc.rect(0,0,612,90,'F');
+  doc.setFillColor(...ac);doc.rect(0,0,6,90,'F');
+  try{doc.addImage(currentLogoSrc,'JPEG',lm,y-8,72,58);}catch(e){}
+  doc.setFont('helvetica','bold');doc.setFontSize(18);doc.setTextColor(...ac);
+  doc.text('KPC PLUMBING',122,y+10);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(100,100,100);
+  doc.text('Licensed - Bonded - Insured  |  409.553.9241',122,y+24);
+  doc.setFont('helvetica','bold');doc.setFontSize(16);doc.setTextColor(...ac);
+  doc.text('WEEKLY PAYROLL REPORT',r,y+14,{align:'right'});
+  doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(80,80,80);
+  doc.text('Week: '+week+' to '+weekEnd,r,y+30,{align:'right'});
+  doc.text('Generated: '+new Date().toLocaleDateString(),r,y+44,{align:'right'});
+
+  y=100;
+
+  // Get all techs
+  const techs=[...new Set(timeEntries.map(e=>e.technician))].sort();
+
+  if(!techs.length){
+    doc.setFont('helvetica','normal');doc.setFontSize(12);doc.setTextColor(100,100,100);
+    doc.text('No time entries found for this week.',306,200,{align:'center'});
+    doc.save('KPC-Payroll-'+week+'.pdf');
+    toast('Payroll PDF downloaded!');
+    return;
+  }
+
+  // Summary table header
+  doc.setFillColor(...ac);doc.rect(lm,y,pw,22,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+  doc.text('TECHNICIAN',lm+6,y+15);
+  doc.text('REG HRS',lm+200,y+15,{align:'right'});
+  doc.text('OT HRS',lm+270,y+15,{align:'right'});
+  doc.text('DRIVE',lm+330,y+15,{align:'right'});
+  doc.text('SHOP',lm+390,y+15,{align:'right'});
+  doc.text('TOTAL',r-6,y+15,{align:'right'});
+  y+=22;
+
+  let grandReg=0;let grandOT=0;let grandDrive=0;let grandShop=0;let grandTotal=0;
+
+  techs.forEach((tech,idx)=>{
+    const entries=timeEntries.filter(e=>e.technician===tech);
+    let reg=entries.reduce((s,e)=>s+(e.hours_regular||0),0);
+    let ot=entries.reduce((s,e)=>s+(e.hours_overtime||0),0);
+    const drive=entries.reduce((s,e)=>s+(e.hours_drive||0),0);
+    const shop=entries.reduce((s,e)=>s+(e.hours_shop||0),0);
+    const total=reg+ot+drive+shop;
+
+    // Auto-calc OT if reg > 40
+    if(reg>40){ot+=reg-40;reg=40;}
+
+    grandReg+=reg;grandOT+=ot;grandDrive+=drive;grandShop+=shop;grandTotal+=total;
+
+    if(idx%2===0){doc.setFillColor(245,248,255);doc.rect(lm,y,pw,20,'F');}
+    doc.setFont('helvetica','normal');doc.setFontSize(10);
+    doc.setTextColor(ot>0?220:40,ot>0?38:40,ot>0?38:40);
+    doc.text(tech,lm+6,y+14);
+    doc.setTextColor(40,40,40);
+    doc.text(reg.toFixed(2),lm+200,y+14,{align:'right'});
+    doc.setTextColor(ot>0?220:40,ot>0?38:40,ot>0?38:40);
+    doc.text(ot.toFixed(2),lm+270,y+14,{align:'right'});
+    doc.setTextColor(40,40,40);
+    doc.text(drive.toFixed(2),lm+330,y+14,{align:'right'});
+    doc.text(shop.toFixed(2),lm+390,y+14,{align:'right'});
+    doc.setFont('helvetica','bold');
+    doc.text(total.toFixed(2),r-6,y+14,{align:'right'});
+    y+=20;
+  });
+
+  // Totals row
+  doc.setFillColor(...ac);doc.rect(lm,y,pw,22,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(255,255,255);
+  doc.text('TOTALS',lm+6,y+15);
+  doc.text(grandReg.toFixed(2),lm+200,y+15,{align:'right'});
+  doc.text(grandOT.toFixed(2),lm+270,y+15,{align:'right'});
+  doc.text(grandDrive.toFixed(2),lm+330,y+15,{align:'right'});
+  doc.text(grandShop.toFixed(2),lm+390,y+15,{align:'right'});
+  doc.text(grandTotal.toFixed(2),r-6,y+15,{align:'right'});
+  y+=32;
+
+  // Overtime warning
+  if(grandOT>0){
+    doc.setFillColor(254,242,242);doc.rect(lm,y,pw,20,'F');
+    doc.setDrawColor(220,38,38);doc.rect(lm,y,pw,20);
+    doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(220,38,38);
+    doc.text('⚠ OVERTIME ALERT: '+grandOT.toFixed(2)+' overtime hours this week',lm+6,y+14);
+    y+=28;
+  }
+
+  y+=10;
+
+  // Detailed breakdown per tech
+  techs.forEach(tech=>{
+    const entries=timeEntries.filter(e=>e.technician===tech);
+    if(!entries.length)return;
+
+    // Check if need new page
+    if(y>680){doc.addPage();y=50;}
+
+    doc.setFillColor(220,230,245);doc.rect(lm,y,pw,18,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(...ac);
+    doc.text('👤 '+tech+' — Daily Breakdown',lm+6,y+13);y+=18;
+
+    // Group by date
+    const byDate={};
+    entries.forEach(e=>{if(!byDate[e.entry_date])byDate[e.entry_date]=[];byDate[e.entry_date].push(e);});
+
+    Object.keys(byDate).sort().forEach(date=>{
+      const d=new Date(date+'T12:00:00');
+      const dayName=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+      const dayEntries=byDate[date];
+      const dayTotal=dayEntries.reduce((s,e)=>s+(e.total_hours||0),0);
+
+      doc.setFont('helvetica','bold');doc.setFontSize(8.5);doc.setTextColor(60,60,60);
+      doc.text(dayName,lm+4,y+12);
+      doc.setFont('helvetica','normal');
+      doc.text(dayTotal.toFixed(2)+' hrs',lm+100,y+12);
+      y+=14;
+
+      dayEntries.forEach(e=>{
+        if(y>720){doc.addPage();y=50;}
+        const typeColors={regular:[26,95,168],overtime:[220,38,38],drive:[13,158,110],shop:[124,58,237]};
+        const tc=typeColors[e.time_type]||[80,80,80];
+        doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(100,100,100);
+        const timeStr=e.clock_in?(formatTime(e.clock_in)+(e.clock_out?' - '+formatTime(e.clock_out):'')):'Manual entry';
+        doc.text('  '+timeStr,lm+4,y+10);
+        doc.text(e.job_description||'General Work',lm+100,y+10,{maxWidth:260});
+        doc.setTextColor(...tc);doc.setFont('helvetica','bold');
+        doc.text((e.total_hours||0).toFixed(2)+'h '+((e.time_type||'regular').charAt(0).toUpperCase()+(e.time_type||'regular').slice(1)),r-6,y+10,{align:'right'});
+        y+=12;
+      });
+      y+=4;
+    });
+    y+=8;
+  });
+
+  // Footer
+  doc.setFillColor(...bg);doc.rect(0,750,612,42,'F');
+  doc.setFillColor(...ac);doc.rect(0,750,6,42,'F');
+  doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(...ac);
+  doc.text('KPC Plumbing  -  Licensed - Bonded - Insured  -  409.553.9241',306,764,{align:'center'});
+  doc.setTextColor(120,120,120);
+  doc.text('Payroll week: '+week+' to '+weekEnd+'  |  Generated: '+new Date().toLocaleString(),306,776,{align:'center'});
+
+  doc.save('KPC-Payroll-Week-'+week+'.pdf');
+  toast('Payroll PDF downloaded! ✅');
+}
+
+
+async function loadAllScheduled(){
+  setSyncStatus('syncing');
+  try{
+    const today=new Date().toISOString().split('T')[0];
+    // Load past 7 days and next 30 days
+    const from=new Date(Date.now()-7*86400000).toISOString().split('T')[0];
+    const to=new Date(Date.now()+30*86400000).toISOString().split('T')[0];
+    const{data,error}=await sb.from('schedules')
+      .select('*')
+      .gte('schedule_date',from)
+      .lte('schedule_date',to)
+      .order('schedule_date')
+      .order('start_time');
+    if(error)throw error;
+    setSyncStatus('ok');
+    const c=document.getElementById('sched-all-list');
+    if(!data||!data.length){
+      c.innerHTML='<div class="empty-state"><p>No scheduled jobs found.</p></div>';
+      return;
+    }
+    const statusColors={pending:'#f59e0b',in_progress:'#1a5fa8',completed:'#0d9e6e',cancelled:'#dc2626'};
+    const statusLabels={pending:'Pending',in_progress:'In Progress',completed:'Done',cancelled:'Cancelled'};
+    // Group by date
+    const byDate={};
+    data.forEach(j=>{if(!byDate[j.schedule_date])byDate[j.schedule_date]=[];byDate[j.schedule_date].push(j);});
+    let html='';
+    Object.keys(byDate).sort().forEach(date=>{
+      const d=new Date(date+'T12:00:00');
+      const isToday=date===today;
+      const dayLabel=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+      html+=`<div style="font-size:11px;font-weight:700;color:${isToday?'#0d9e6e':'#1a5fa8'};text-transform:uppercase;margin:10px 0 6px">${isToday?'📅 TODAY — ':''} ${dayLabel}</div>`;
+      byDate[date].forEach(job=>{
+        html+=`<div style="background:#f8fafc;border-left:4px solid ${job.color||'#1a5fa8'};border-radius:0 10px 10px 0;padding:8px 12px;margin-bottom:6px;cursor:pointer" onclick="goToSchedDate('${job.schedule_date}')">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-size:13px;font-weight:600;color:#1a1a1a">${job.job_title||'Job'}</div>
+            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;color:white;background:${statusColors[job.status||'pending']}">${statusLabels[job.status||'pending']}</span>
+          </div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px">${job.technician?'👤 '+job.technician+' · ':''}${job.start_time?formatTime(job.start_time):''}${job.customer_name?' · '+job.customer_name:''}${job.phone?' · <a href="tel:'+job.phone.replace(/\D/g,'')+'" style="color:#1a5fa8;text-decoration:none">📞 '+job.phone+'</a>':''}</div>
+        </div>`;
+      });
+    });
+    c.innerHTML=html;
+  }catch(e){setSyncStatus('error');toast('Could not load: '+e.message);}
+}
+
+function goToSchedDate(date){
+  scheduleDate=date;
+  document.getElementById('sched-date').value=date;
+  fetchSchedule();
+  document.getElementById('sched-all-list').innerHTML='<div style="font-size:13px;color:#94a3b8;text-align:center;padding:16px">Tap Load All to see all scheduled jobs</div>';
+  // Scroll to top of schedule
+  document.getElementById('tab-schedule').scrollIntoView({behavior:'smooth'});
+}
+
+
+// ---- Click to Call helpers ----
+function updatePhoneLink(val){
+  const span=document.getElementById('client-phone-call');
+  const link=document.getElementById('client-phone-link');
+  const clean=val.replace(/\D/g,'');
+  if(span&&link&&clean.length>=7){
+    span.style.display='inline';
+    link.href='tel:'+clean;
+    link.textContent='📞 Tap to call';
+  } else if(span){
+    span.style.display='none';
+  }
+}
+
+function updateWOPhoneLink(val){
+  const span=document.getElementById('wo-phone-call');
+  const link=document.getElementById('wo-phone-link');
+  const clean=val.replace(/\D/g,'');
+  if(span&&link&&clean.length>=7){
+    span.style.display='inline';
+    link.href='tel:'+clean;
+    link.textContent='📞 Tap to call';
+  } else if(span){
+    span.style.display='none';
+  }
+}
+
+// Update phone links when loading a doc
+function refreshPhoneLinks(){
+  const cp=document.getElementById('client-phone');
+  if(cp&&cp.value)updatePhoneLink(cp.value);
+  const wp=document.getElementById('wo-req-phone');
+  if(wp&&wp.value)updateWOPhoneLink(wp.value);
+}
 
 </script>
 </body>
