@@ -2359,13 +2359,35 @@ async function setWOStatus(id,status){
 }
 
 async function deleteWO(id){
-  if(!confirm('Delete this work order?'))return;
+  if(!confirm('Delete this work order? This will also remove it from the Schedule and Calendar.'))return;
   setSyncStatus('syncing');
   try{
+    // Get the WO data first so we can clean up related records
+    const wo=allWOs.find(w=>w.id===id);
+
+    // Delete the work order
     await sb.from('work_orders').delete().eq('id',id);
+
+    // Clean up schedule entries with matching wo_num
+    if(wo&&wo.wo_num){
+      await sb.from('schedules').delete().eq('wo_num',wo.wo_num);
+    }
+
+    // Clean up calendar events with matching title pattern
+    if(wo&&wo.requested_by){
+      const titlePattern=(wo.requested_by||'')+(wo.swo_num?' - SWO '+wo.swo_num:'');
+      await sb.from('calendar_events').delete().ilike('title','%'+titlePattern+'%');
+    }
+
     allWOs=allWOs.filter(w=>w.id!==id);
-    renderWOList(allWOs);setSyncStatus('ok');toast('Deleted');
-  }catch(e){setSyncStatus('error');toast('Delete failed');}
+    renderWOList(allWOs);
+    setSyncStatus('ok');
+    toast('Work order and related schedule/calendar entries deleted!');
+  }catch(e){
+    setSyncStatus('error');
+    toast('Delete failed: '+e.message);
+    console.error(e);
+  }
 }
 
 // ---- WO Email ----
@@ -3005,47 +3027,24 @@ async function deleteEvent(){
 
 // Auto-add to calendar when WO is saved with appointment date
 async function addWOToCalendar(woData){
+  // Only add appointment date to calendar (received date stays on WO form only)
+  if(!woData.appt_date)return;
   try{
-    const events=[];
     const baseTitle=(woData.requested_by||'Job')+(woData.swo_num?' - SWO '+woData.swo_num:'');
-
-    // Event 1: Work order received date (start_date / wo_date)
-    const receivedDate=woData.wo_date||woData.start_date;
-    if(receivedDate){
-      events.push({
-        title:'📥 WO Received: '+baseTitle,
-        event_date:receivedDate,
-        start_time:'',
-        end_time:'',
-        technician:woData.assigned_to||'',
-        customer_name:woData.requested_by||'',
-        address:woData.address||'',
-        phone:woData.requester_phone||'',
-        event_type:'warranty',
-        notes:'Work order received. '+( woData.problem_description||'')
-      });
-    }
-
-    // Event 2: Appointment date (when job is scheduled to be done)
-    if(woData.appt_date){
-      events.push({
-        title:'🔧 Job: '+baseTitle,
-        event_date:woData.appt_date,
-        start_time:woData.appt_time?woData.appt_time.split('-')[0].trim():'',
-        end_time:woData.appt_time&&woData.appt_time.includes('-')?woData.appt_time.split('-')[1].trim():'',
-        technician:woData.assigned_to||'',
-        customer_name:woData.requested_by||'',
-        address:woData.address||'',
-        phone:woData.requester_phone||'',
-        event_type:'warranty',
-        notes:woData.problem_description||''
-      });
-    }
-
-    if(events.length>0){
-      await sb.from('calendar_events').insert(events);
-      toast(events.length>1?'Added received & job dates to calendar! 📅':'Added to calendar! 📅');
-    }
+    const evData={
+      title:'🔧 '+baseTitle,
+      event_date:woData.appt_date,
+      start_time:woData.appt_time?woData.appt_time.split('-')[0].trim():'',
+      end_time:woData.appt_time&&woData.appt_time.includes('-')?woData.appt_time.split('-')[1].trim():'',
+      technician:woData.assigned_to||'',
+      customer_name:woData.requested_by||'',
+      address:woData.address||'',
+      phone:woData.requester_phone||'',
+      event_type:'warranty',
+      notes:woData.problem_description||'',
+      color:'#7c3aed'
+    };
+    await sb.from('calendar_events').insert(evData);
   }catch(e){console.error('Calendar add failed',e);}
 }
 
