@@ -2685,11 +2685,13 @@ async function autoFillWO(){
       parsed.address=addr;
     }
 
-    // ---- Phone ----
-    const phoneMatch=text.match(/Phone[:\s]+([\d\-\(\)\s]{7,15})/i)||text.match(/Best Phone[:\s]+(\d+)/i)||text.match(/(\(\d{3}\)\s*\d{3}[\-\s]\d{4})/);
+    // ---- Phone: match labeled phone numbers only ----
+    // Must be labeled "Phone:" or "Best Phone:" to avoid matching zip codes
+    const phoneMatch=text.match(/(?:Phone|Best Phone)[:\s]+([\d\s\(\)\-\.]{10,15})/i);
     if(phoneMatch){
       let ph=phoneMatch[1].replace(/\D/g,'');
       if(ph.length===10)ph='('+ph.slice(0,3)+') '+ph.slice(3,6)+'-'+ph.slice(6);
+      else if(ph.length===11&&ph[0]==='1')ph='('+ph.slice(1,4)+') '+ph.slice(4,7)+'-'+ph.slice(7);
       parsed.phone=ph;
     }
 
@@ -2740,8 +2742,10 @@ async function autoFillWO(){
     // ---- Fill the form ----
     if(parsed.customer_name)document.getElementById('wo-requested-by').value=parsed.customer_name;
     if(parsed.address){
-      document.getElementById('wo-address').value=parsed.address;
-      document.getElementById('wo-department').value=parsed.address;
+      // Strip any phone numbers that may have been captured with the address
+      const cleanAddr=parsed.address.replace(/\s*[\(\d]{1}[\d\s\(\)\-\.]{9,14}$/,'').trim();
+      document.getElementById('wo-address').value=cleanAddr;
+      document.getElementById('wo-department').value=cleanAddr;
     }
     if(parsed.phone)document.getElementById('wo-req-phone').value=parsed.phone;
     if(parsed.email)document.getElementById('wo-req-email').value=parsed.email;
