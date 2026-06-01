@@ -2671,17 +2671,11 @@ async function autoFillWO(){
     const custSection=text.match(/Customer Information\s*([^\n]+)/i);
     if(custSection)parsed.customer_name=custSection[1].trim();
 
-    // ---- Address: look for street pattern ----
-    // Match full address including city, state, zip
-    // Format: 3801 PHEASANT ST TRLR 38 ORANGE, TX 77630
-    const addrMatch=text.match(/(\d+\s+[A-Z0-9\s,\.]+(?:ST|AVE|RD|DR|LN|BLVD|WAY|CT|PL|TRLR|TRAIL|CIRCLE|CIR|PKWY)[^\n,]+(?:,?\s*[A-Z\s]+,?\s*[A-Z]{2}\s*\d{5})?)/i);
+    // ---- Address: match street through zip code, stop at zip ----
+    const addrMatch=text.match(/(\d+\s+[A-Z0-9\s,\.]+(?:ST|AVE|RD|DR|LN|BLVD|WAY|CT|PL|TRLR|TRAIL|CIRCLE|CIR|PKWY)[\s\w,\.]*\d{5})/i);
     if(addrMatch){
-      let addr=addrMatch[1].trim();
-      // If city/state/zip not captured, look for them on same or next segment
-      if(!/\d{5}/.test(addr)){
-        const zipMatch=text.match(/([A-Z\s]+,\s*TX\s*\d{5})/i);
-        if(zipMatch)addr+=', '+zipMatch[1].trim();
-      }
+      // Cut off anything after the 5-digit zip code
+      let addr=addrMatch[1].trim().replace(/(\d{5}).*$/,'$1').trim();
       parsed.address=addr;
     }
 
@@ -2742,10 +2736,8 @@ async function autoFillWO(){
     // ---- Fill the form ----
     if(parsed.customer_name)document.getElementById('wo-requested-by').value=parsed.customer_name;
     if(parsed.address){
-      // Strip any phone numbers that may have been captured with the address
-      const cleanAddr=parsed.address.replace(/\s*[\(\d]{1}[\d\s\(\)\-\.]{9,14}$/,'').trim();
-      document.getElementById('wo-address').value=cleanAddr;
-      document.getElementById('wo-department').value=cleanAddr;
+      document.getElementById('wo-address').value=parsed.address;
+      document.getElementById('wo-department').value=parsed.address;
     }
     if(parsed.phone)document.getElementById('wo-req-phone').value=parsed.phone;
     if(parsed.email)document.getElementById('wo-req-email').value=parsed.email;
