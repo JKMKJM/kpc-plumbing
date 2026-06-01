@@ -260,7 +260,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       <div class="field"><label>Client name</label><input type="text" id="client-name" placeholder="Customer or company"></div>
       <div class="field"><label>Email</label><input type="email" id="client-email" placeholder="customer@email.com"></div>
       <div class="field"><label>Phone <span id="client-phone-call" style="display:none"><a id="client-phone-link" href="#" style="color:#1a5fa8;font-size:12px;font-weight:600;text-decoration:none">📞 Tap to call</a></span></label><input type="tel" id="client-phone" placeholder="Phone number" oninput="updatePhoneLink(this.value)"></div>
-      <div class="field"><label>Address</label><textarea id="client-addr" style="min-height:44px"></textarea></div>
+      <div class="field"><label>Address <span id="client-addr-map" style="display:none"><a id="client-addr-link" href="#" target="_blank" style="color:#1a5fa8;font-size:12px;font-weight:600;text-decoration:none">📍 Open in Maps</a></span></label><textarea id="client-addr" style="min-height:44px" oninput="updateAddrLink(this.value)"></textarea></div>
     </div>
 
     <div class="card">
@@ -635,7 +635,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       <div class="card-title">Requestor Information</div>
       <div class="field"><label>Requested By</label><input type="text" id="wo-requested-by" placeholder="Name"></div>
       <div class="row">
-        <div class="field"><label>Department</label><input type="text" id="wo-department" placeholder="Dept."></div>
+        <div class="field"><label>Address</label><input type="text" id="wo-department" placeholder="Customer address"></div>
         <div class="field"><label>Phone <span id="wo-phone-call" style="display:none"><a id="wo-phone-link" href="#" style="color:#1a5fa8;font-size:12px;font-weight:600;text-decoration:none">📞 Tap to call</a></span></label><input type="tel" id="wo-req-phone" placeholder="Phone" oninput="updateWOPhoneLink(this.value)"></div>
       </div>
       <div class="field"><label>Email</label><input type="email" id="wo-req-email" placeholder="email@example.com"></div>
@@ -650,7 +650,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       <div class="row">
         <div class="field"><label>Floor</label><input type="text" id="wo-floor" placeholder="Floor"></div>
       </div>
-      <div class="field"><label>Address</label><input type="text" id="wo-address" placeholder="Full address"></div>
+      <div class="field"><label>Address <span id="wo-addr-map" style="display:none"><a id="wo-addr-link" href="#" target="_blank" style="color:#1a5fa8;font-size:12px;font-weight:600;text-decoration:none">📍 Open in Maps</a></span></label><input type="text" id="wo-address" placeholder="Full address" oninput="updateWOAddrLink(this.value)"></div>
     </div>
 
     <div class="card">
@@ -1508,7 +1508,7 @@ function loadDoc(id){
   const checkField=document.getElementById('check-num-field');
   if(checkField)checkField.style.display=payMethod==='check'?'block':'none';
   renderItems();renderPhotos();showTab('doc');
-  setTimeout(refreshPhoneLinks,100);
+  setTimeout(()=>{refreshPhoneLinks();refreshAddrLinks();},100);
   toast('Loaded — editing existing record');
 }
 
@@ -1537,6 +1537,7 @@ function renderCustomerList(custs){
       <div style="flex:1;cursor:pointer" onclick="useCustomer('${cu.id}')">
         <div class="cust-name">${cu.name||''}</div>
         <div class="cust-meta">${cu.phone?`<a href="tel:${cu.phone.replace(/\D/g,'')}" style="color:#1a5fa8;text-decoration:none">📞 ${cu.phone}</a>`:''} ${cu.email?'· '+cu.email:''}</div>
+        ${cu.address?`<div style="font-size:11px;margin-top:2px"><a href="https://maps.google.com/?q=${encodeURIComponent(cu.address)}" target="_blank" style="color:#1a5fa8;text-decoration:none">📍 ${cu.address}</a></div>`:''}
       </div>
       <div class="cust-actions">
         <button class="icon-btn" onclick="editCustomer('${cu.id}')" title="Edit">✏️</button>
@@ -1569,6 +1570,7 @@ function filterPickList(){
       <div>
         <div class="cust-name">${cu.name||''}</div>
         <div class="cust-meta">${cu.phone?`<a href="tel:${cu.phone.replace(/\D/g,'')}" style="color:#1a5fa8;text-decoration:none">📞 ${cu.phone}</a>`:''} ${cu.email?'· '+cu.email:''}</div>
+        ${cu.address?`<div style="font-size:11px;margin-top:2px"><a href="https://maps.google.com/?q=${encodeURIComponent(cu.address)}" target="_blank" style="color:#1a5fa8;text-decoration:none">📍 ${cu.address}</a></div>`:''}
       </div>
     </div>`).join('');
 }
@@ -2189,9 +2191,13 @@ function convertWOtoInvoice(){
   // Copy email and phone
   if(d.requester_email)document.getElementById('client-email').value=d.requester_email;
   if(d.requester_phone)document.getElementById('client-phone').value=d.requester_phone;
+  // Tag invoice with WO number so it can be found from work order
+  if(d.wo_num)document.getElementById('job-num').value='WO-'+d.wo_num;
+  if(d.swo_num)document.getElementById('po-num').value='SWO-'+d.swo_num;
   renderItems();
   getNextNumber('invoice').then(n=>document.getElementById('inv-num').value=n);
-  toast('Work order converted to invoice!');
+  currentDocId=null; // Make sure it saves as new invoice
+  toast('Work order converted! Tap Save & Sync to save the invoice.');
 }
 
 // ---- Load WOs ----
@@ -2279,11 +2285,16 @@ function renderWOList(wos){
         <div style="margin-top:4px">
           <span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;color:white;background:${WO_STATUS_COLORS[wo.wo_status||'open']||'#f59e0b'}">${WO_STATUS_LABELS[wo.wo_status||'open']||'🟡 Open'}</span>
         </div>
-        <div class="saved-meta" style="margin-top:3px">${wo.assigned_to?wo.assigned_to+' · ':''}${wo.appt_date?'📅 Appt: '+wo.appt_date:'No appt date'}${wo.swo_num?' · SWO '+wo.swo_num:''}${wo.requester_phone?' · <a href="tel:'+wo.requester_phone.replace(/\D/g,'')+'" style="color:#1a5fa8;text-decoration:none">📞 '+wo.requester_phone+'</a>':''}</div>
+        <div class="saved-meta" style="margin-top:3px">${wo.assigned_to?wo.assigned_to+' · ':''}${wo.appt_date?'📅 Appt: '+wo.appt_date:'No appt date'}${wo.swo_num?' · SWO '+wo.swo_num:''}</div>
+        ${wo.address?`<div style="font-size:11px;margin-top:2px"><a href="https://maps.google.com/?q=${encodeURIComponent(wo.address)}" target="_blank" style="color:#1a5fa8;text-decoration:none">📍 ${wo.address}</a></div>`:''}
+        ${wo.requester_phone?`<div style="font-size:11px;margin-top:2px"><a href="tel:${wo.requester_phone.replace(/\D/g,'')}" style="color:#1a5fa8;text-decoration:none">📞 ${wo.requester_phone}</a></div>`:''}
       </div>
-      <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-        <button onclick="quickStatusWO(event,'${wo.id}','${wo.wo_status||'open'}')" style="background:#e8f4fd;border:none;border-radius:8px;padding:5px 8px;cursor:pointer;font-size:12px;color:#1a5fa8;font-weight:600;white-space:nowrap">Status</button>
-        <button onclick="deleteWO('${wo.id}')" style="background:#fee2e2;border:none;border-radius:8px;padding:5px 8px;cursor:pointer;font-size:14px">🗑</button>
+      <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0">
+        <div style="display:flex;gap:4px">
+          <button onclick="quickStatusWO(event,'${wo.id}','${wo.wo_status||'open'}')" style="background:#e8f4fd;border:none;border-radius:8px;padding:5px 8px;cursor:pointer;font-size:12px;color:#1a5fa8;font-weight:600;white-space:nowrap">Status</button>
+          <button onclick="deleteWO('${wo.id}')" style="background:#fee2e2;border:none;border-radius:8px;padding:5px 8px;cursor:pointer;font-size:14px">🗑</button>
+        </div>
+        <button onclick="findWOInvoice('${wo.wo_num||''}')" style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:4px 8px;cursor:pointer;font-size:11px;color:#0d9e6e;font-weight:600;white-space:nowrap;width:100%">📄 Find Invoice</button>
       </div>
     </div>`).join('');
 }
@@ -2476,7 +2487,7 @@ function exportWOPDF(){
   };
 
   y=section('REQUESTOR INFORMATION',[
-    ['Requested By',d.requested_by],['Department',d.department],
+    ['Requested By',d.requested_by],['Address',d.department],
     ['Phone',d.requester_phone],['Email',d.requester_email]
   ],y);
 
@@ -2728,7 +2739,10 @@ async function autoFillWO(){
 
     // ---- Fill the form ----
     if(parsed.customer_name)document.getElementById('wo-requested-by').value=parsed.customer_name;
-    if(parsed.address)document.getElementById('wo-address').value=parsed.address;
+    if(parsed.address){
+      document.getElementById('wo-address').value=parsed.address;
+      document.getElementById('wo-department').value=parsed.address;
+    }
     if(parsed.phone)document.getElementById('wo-req-phone').value=parsed.phone;
     if(parsed.email)document.getElementById('wo-req-email').value=parsed.email;
     if(parsed.swo_num)document.getElementById('wo-swo-num').value=parsed.swo_num;
@@ -2750,6 +2764,7 @@ async function autoFillWO(){
     }
 
     closeImportWO();
+    setTimeout(()=>{refreshPhoneLinks();refreshAddrLinks();},100);
     toast('Work order filled in! Review and save.');
 
   }catch(e){
@@ -3512,7 +3527,7 @@ function renderSchedule(){
             ${job.start_time?formatTime(job.start_time)+(job.end_time?' – '+formatTime(job.end_time):''):'No time set'}
             ${job.customer_name?' · '+job.customer_name:''}
           </div>
-          ${job.address?`<div style="font-size:11px;color:#94a3b8">📍 ${job.address}</div>`:''}
+          ${job.address?`<div style="font-size:11px"><a href="https://maps.google.com/?q=${encodeURIComponent(job.address)}" target="_blank" style="color:#1a5fa8;text-decoration:none">📍 ${job.address}</a></div>`:''}
           ${job.phone?`<div style="font-size:11px;color:#1a5fa8"><a href="tel:${job.phone.replace(/\D/g,'')}" style="color:#1a5fa8;text-decoration:none">📞 ${job.phone}</a></div>`:''}
           ${job.notes?`<div style="font-size:11px;color:#94a3b8;margin-top:3px">${job.notes}</div>`:''}
         </div>
@@ -4114,6 +4129,64 @@ function refreshPhoneLinks(){
   if(cp&&cp.value)updatePhoneLink(cp.value);
   const wp=document.getElementById('wo-req-phone');
   if(wp&&wp.value)updateWOPhoneLink(wp.value);
+}
+
+
+// ---- Google Maps address links ----
+function updateAddrLink(val){
+  const span=document.getElementById('client-addr-map');
+  const link=document.getElementById('client-addr-link');
+  if(span&&link&&val.trim().length>5){
+    span.style.display='inline';
+    link.href='https://maps.google.com/?q='+encodeURIComponent(val.trim());
+  } else if(span){
+    span.style.display='none';
+  }
+}
+
+function updateWOAddrLink(val){
+  const span=document.getElementById('wo-addr-map');
+  const link=document.getElementById('wo-addr-link');
+  if(span&&link&&val.trim().length>5){
+    span.style.display='inline';
+    link.href='https://maps.google.com/?q='+encodeURIComponent(val.trim());
+  } else if(span){
+    span.style.display='none';
+  }
+}
+
+function refreshAddrLinks(){
+  const ca=document.getElementById('client-addr');
+  if(ca&&ca.value)updateAddrLink(ca.value);
+  const wa=document.getElementById('wo-address');
+  if(wa&&wa.value)updateWOAddrLink(wa.value);
+}
+
+
+// ---- Find invoice linked to a work order ----
+async function findWOInvoice(woNum){
+  if(!woNum){toast('No WO number on this work order');return;}
+  setSyncStatus('syncing');
+  try{
+    // Search invoices by job_num containing the WO number
+    const{data,error}=await sb.from('docs')
+      .select('*')
+      .ilike('job_num','%'+woNum+'%')
+      .order('created_at',{ascending:false});
+    if(error)throw error;
+    if(!data||!data.length){
+      toast('No invoice found for WO-'+woNum+' — create one by tapping Convert to Invoice');
+      return;
+    }
+    // Load the most recent matching invoice
+    setSyncStatus('ok');
+    allDocs=[...allDocs.filter(d=>!data.find(x=>x.id===d.id)),...data];
+    loadDoc(data[0].id);
+    toast('Invoice found for WO-'+woNum+'!');
+  }catch(e){
+    setSyncStatus('error');
+    toast('Search failed: '+e.message);
+  }
 }
 
 </script>
