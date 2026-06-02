@@ -3941,13 +3941,31 @@ window.addEventListener('load',()=>{
 
 // ---- Payroll PDF Report ----
 async function exportPayrollPDF(){
-  // Make sure we have all tech entries loaded
-  if(!timeEntries.length){
-    await fetchAllTechEntries();
-  }
-
+  // Always fetch fresh data for the selected week
   const week=document.getElementById('ts-week-start').value||tsWeekStart;
   const weekEnd=getWeekEnd(week);
+  setSyncStatus('syncing');
+  try{
+    const{data,error}=await sb.from('time_entries')
+      .select('*')
+      .gte('entry_date',week)
+      .lte('entry_date',weekEnd)
+      .order('technician')
+      .order('entry_date');
+    if(error)throw error;
+    timeEntries=data||[];
+    setSyncStatus('ok');
+    if(!timeEntries.length){
+      toast('No time entries found for week of '+week);
+      return;
+    }
+  }catch(e){
+    setSyncStatus('error');
+    toast('Could not load time entries: '+e.message);
+    return;
+  }
+  const week2=document.getElementById('ts-week-start').value||tsWeekStart;
+  const weekEnd2=getWeekEnd(week);
   const yr=new Date().getFullYear();
 
   const {jsPDF}=window.jspdf;
@@ -3967,7 +3985,7 @@ async function exportPayrollPDF(){
   doc.setFont('helvetica','bold');doc.setFontSize(16);doc.setTextColor(...ac);
   doc.text('WEEKLY PAYROLL REPORT',r,y+14,{align:'right'});
   doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(80,80,80);
-  doc.text('Week: '+week+' to '+weekEnd,r,y+30,{align:'right'});
+  doc.text('Week: '+week2+' to '+weekEnd2,r,y+30,{align:'right'});
   doc.text('Generated: '+new Date().toLocaleDateString(),r,y+44,{align:'right'});
 
   y=100;
@@ -4098,9 +4116,9 @@ async function exportPayrollPDF(){
   doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(...ac);
   doc.text('KPC Plumbing  -  Licensed - Bonded - Insured  -  409.553.9241',306,764,{align:'center'});
   doc.setTextColor(120,120,120);
-  doc.text('Payroll week: '+week+' to '+weekEnd+'  |  Generated: '+new Date().toLocaleString(),306,776,{align:'center'});
+  doc.text('Payroll week: '+week2+' to '+weekEnd2+'  |  Generated: '+new Date().toLocaleString(),306,776,{align:'center'});
 
-  doc.save('KPC-Payroll-Week-'+week+'.pdf');
+  doc.save('KPC-Payroll-Week-'+week2+'.pdf');
   toast('Payroll PDF downloaded! ✅');
 }
 
