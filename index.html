@@ -114,6 +114,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .est-banner{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#92400e;font-weight:500;text-align:center}
 .pg-form-card{background:#e8f4fd;border:1px solid #bfdbfe;border-radius:12px;padding:14px;margin-bottom:12px}
 
+/* Diagnostic equipment buttons */
+.diag-equip-btn{color:white;border:none;border-radius:12px;padding:16px;display:flex;align-items:center;gap:14px;cursor:pointer;font-family:inherit;text-align:left;width:100%;transition:transform .1s,opacity .15s}
+.diag-equip-btn:active{transform:scale(.97);opacity:.9}
+
 /* Tappable phone numbers */
 a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
 .phone-link{color:#1a5fa8;text-decoration:none;font-weight:600}
@@ -206,6 +210,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
     <div class="tab" onclick="showTab('timesheet')">⏱ Time</div>
     <div class="tab" onclick="showTab('schedule')">📋 Schedule</div>
     <div class="tab" onclick="showTab('settings')">⚙️ Settings</div>
+    <div class="tab" onclick="showTab('diagnostic')">🔍 Diagnose</div>
   </div>
 
   <!-- CREATE TAB -->
@@ -778,6 +783,20 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
 
 
 
+
+  <!-- DIAGNOSTIC TAB -->
+  <div id="tab-diagnostic" class="content" style="display:none">
+    <div class="card">
+      <div class="card-title" style="font-size:13px;display:flex;align-items:center;gap:6px">
+        <span style="font-size:18px">🔍</span> Plumbing Diagnostic Tool
+      </div>
+      <p style="font-size:12px;color:#64748b;margin-bottom:0">Step-by-step troubleshooting with repair estimates and manufacturer guides</p>
+    </div>
+    <div id="diag-content">
+      <p style="font-size:13px;color:#94a3b8;text-align:center;padding:20px">Loading diagnostic tool...</p>
+    </div>
+  </div>
+
   <!-- SETTINGS TAB -->
   <div id="tab-settings" class="content" style="display:none">
     <div class="card">
@@ -1144,10 +1163,10 @@ function renderPhotos(){
 
 function delPhoto(i){photos.splice(i,1);renderPhotos();}
 function openImgModal(i){
-  // Handle WO photos (prefixed with wo_)
   if(typeof i==='string'&&i.startsWith('wo_')){
     const idx=parseInt(i.replace('wo_',''));
-    document.getElementById('img-modal-src').src=woPhotos[idx];
+    const p=woPhotos[idx];
+    document.getElementById('img-modal-src').src=p.url||p.localSrc||'';
   } else {
     document.getElementById('img-modal-src').src=photos[i];
   }
@@ -1206,8 +1225,8 @@ async function newDoc(){
 }
 
 function showTab(t){
-  ['doc','priceguide','saved','customers','workorder','calendar','timesheet','schedule','settings'].forEach(id=>document.getElementById('tab-'+id).style.display=id===t?'block':'none');
-  document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',['doc','priceguide','saved','customers','workorder','calendar','timesheet','schedule','settings'][i]===t));
+  ['doc','priceguide','saved','customers','workorder','calendar','timesheet','schedule','settings','diagnostic'].forEach(id=>document.getElementById('tab-'+id).style.display=id===t?'block':'none');
+  document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',['doc','priceguide','saved','customers','workorder','calendar','timesheet','schedule','settings','diagnostic'][i]===t));
   if(t==='saved')loadAndRenderSaved();
   if(t==='priceguide')renderPG();
   if(t==='customers')loadAndRenderCustomers();
@@ -1215,6 +1234,7 @@ function showTab(t){
   if(t==='timesheet'){loadTimesheet();}
   if(t==='schedule'){loadSchedule();}
   if(t==='settings'){loadSettings();}
+  if(t==='diagnostic'){showDiagHome();}
   if(t==='workorder'){loadAndRenderWOs();if(!document.getElementById('wo-num').value){getNextWONumber().then(n=>document.getElementById('wo-num').value=n);}document.getElementById('wo-date').value=document.getElementById('wo-date').value||new Date().toISOString().split('T')[0];}
 }
 
@@ -2622,15 +2642,53 @@ function exportWOPDF(){
 
 
 
-// ---- WO Photos ----
+// ---- WO Photos with Supabase Storage ----
+// woPhotos stores {url, path, localSrc} objects
 function handleWOPhotos(input){
   const files=Array.from(input.files);
   files.forEach(file=>{
+    // Show preview immediately while uploading
     const r=new FileReader();
-    r.onload=e=>{woPhotos.push(e.target.result);renderWOPhotos();};
+    r.onload=e=>{
+      const localSrc=e.target.result;
+      const tempId='temp_'+Date.now();
+      woPhotos.push({url:'',path:'',localSrc,tempId,uploading:true});
+      renderWOPhotos();
+      // Upload to Supabase Storage
+      uploadWOPhoto(file,tempId);
+    };
     r.readAsDataURL(file);
   });
   input.value='';
+}
+
+async function uploadWOPhoto(file,tempId){
+  try{
+    const woNum=document.getElementById('wo-num').value||'unknown';
+    const timestamp=Date.now();
+    const ext=file.name.split('.').pop()||'jpg';
+    const path=`wo-photos/${woNum}/${timestamp}.${ext}`;
+    const{data,error}=await sb.storage.from('wo-photos').upload(path,file,{
+      contentType:file.type||'image/jpeg',
+      upsert:true
+    });
+    if(error)throw error;
+    // Get public URL
+    const{data:urlData}=sb.storage.from('wo-photos').getPublicUrl(path);
+    const url=urlData.publicUrl;
+    // Update the photo entry
+    const idx=woPhotos.findIndex(p=>p.tempId===tempId);
+    if(idx>=0){woPhotos[idx]={url,path,localSrc:woPhotos[idx].localSrc,uploading:false};}
+    renderWOPhotos();
+    toast('Photo uploaded! ✅');
+  }catch(e){
+    console.error('Photo upload failed:',e);
+    // Keep local preview even if upload fails
+    const idx=woPhotos.findIndex(p=>p.tempId===tempId);
+    if(idx>=0)woPhotos[idx].uploading=false;
+    renderWOPhotos();
+    toast('Photo saved locally (upload failed)');
+  }
 }
 
 function renderWOPhotos(){
@@ -2638,13 +2696,23 @@ function renderWOPhotos(){
   if(!grid)return;
   let html='';
   woPhotos.forEach((p,i)=>{
-    html+=`<div class="photo-thumb" onclick="openImgModal('wo_${i}')"><img src="${p}" alt="Job photo"><button class="photo-del" onclick="event.stopPropagation();delWOPhoto(${i})">✕</button></div>`;
+    const src=p.url||p.localSrc||'';
+    const overlay=p.uploading?'<div style="position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;border-radius:8px;color:white;font-size:11px">Uploading...</div>':'';
+    html+=`<div class="photo-thumb" onclick="openImgModal('wo_${i}')"><img src="${src}" alt="Job photo">${overlay}<button class="photo-del" onclick="event.stopPropagation();delWOPhoto(${i})">✕</button></div>`;
   });
   html+=`<div class="photo-add" onclick="document.getElementById('wo-photo-file').click()"><span style="font-size:24px">📷</span><span>Add photo</span></div>`;
   grid.innerHTML=html;
 }
 
-function delWOPhoto(i){woPhotos.splice(i,1);renderWOPhotos();}
+async function delWOPhoto(i){
+  const photo=woPhotos[i];
+  // Delete from storage if it was uploaded
+  if(photo&&photo.path){
+    try{await sb.storage.from('wo-photos').remove([photo.path]);}catch(e){}
+  }
+  woPhotos.splice(i,1);
+  renderWOPhotos();
+}
 
 // ---- Import from Warranty Company ----
 function openImportWO(){
@@ -4183,6 +4251,1780 @@ async function findWOInvoice(woNum){
     setSyncStatus('error');
     toast('Search failed: '+e.message);
   }
+}
+
+
+// === DIAGNOSTIC MODULE ===
+// ============================================================
+// TROUBLESHOOTING / DIAGNOSTIC MODULE
+// ============================================================
+
+let diagStep=0;
+let diagPath=[];
+let diagEquipment='';
+let diagSymptom='';
+let diagAnswers=[];
+let savedDiagnosis=null;
+
+// ---- Manufacturer Guide Links ----
+const MFG_LINKS = {
+  'gas_tank': [
+    {brand:'Rheem', url:'https://www.rheem.com/support/water-heaters/'},
+    {brand:'Bradford White', url:'https://www.bradfordwhite.com/support'},
+    {brand:'AO Smith', url:'https://www.hotwater.com/support/'},
+    {brand:'State Water Heaters', url:'https://www.statewaterheaters.com/support'},
+    {brand:'American Water Heaters', url:'https://www.americanwaterheater.com/support'},
+    {brand:'Kenmore', url:'https://www.kenmore.com/support'},
+    {brand:'Whirlpool', url:'https://www.whirlpoolwaterheaters.com/support'},
+    {brand:'GE', url:'https://www.geappliancesparts.com/'},
+    {brand:'Reliance', url:'https://www.reliancewaterheater.com/support'},
+    {brand:'Richmond', url:'https://www.richmondwaterheaters.com/support'}
+  ],
+  'electric_tank': [
+    {brand:'Rheem', url:'https://www.rheem.com/support/water-heaters/'},
+    {brand:'Bradford White', url:'https://www.bradfordwhite.com/support'},
+    {brand:'AO Smith', url:'https://www.hotwater.com/support/'},
+    {brand:'State Water Heaters', url:'https://www.statewaterheaters.com/support'},
+    {brand:'American Water Heaters', url:'https://www.americanwaterheater.com/support'},
+    {brand:'Kenmore', url:'https://www.kenmore.com/support'},
+    {brand:'Whirlpool', url:'https://www.whirlpoolwaterheaters.com/support'},
+    {brand:'GE', url:'https://www.geappliancesparts.com/'},
+    {brand:'Reliance', url:'https://www.reliancewaterheater.com/support'},
+    {brand:'Richmond', url:'https://www.richmondwaterheaters.com/support'}
+  ],
+  'gas_tankless': [
+    {brand:'Navien', url:'https://www.navieninc.com/support'},
+    {brand:'Rinnai', url:'https://www.rinnai.us/support'},
+    {brand:'Noritz', url:'https://www.noritz.com/support/'},
+    {brand:'Takagi', url:'https://www.takagi.us.com/support/'},
+    {brand:'Rheem', url:'https://www.rheem.com/support/water-heaters/'},
+    {brand:'Bradford White', url:'https://www.bradfordwhite.com/support'},
+    {brand:'AO Smith', url:'https://www.hotwater.com/support/'},
+    {brand:'Bosch', url:'https://www.bosch-climate.us/support/'},
+    {brand:'Ecosmart', url:'https://www.ecosmartus.com/support/'},
+    {brand:'Stiebel Eltron', url:'https://www.stiebel-eltron-usa.com/support'}
+  ],
+  'electric_tankless': [
+    {brand:'Ecosmart', url:'https://www.ecosmartus.com/support/'},
+    {brand:'Rheem', url:'https://www.rheem.com/support/water-heaters/'},
+    {brand:'Stiebel Eltron', url:'https://www.stiebel-eltron-usa.com/support'},
+    {brand:'Bosch', url:'https://www.bosch-climate.us/support/'},
+    {brand:'Eemax', url:'https://www.eemax.com/support/'},
+    {brand:'Noritz', url:'https://www.noritz.com/support/'},
+    {brand:'AO Smith', url:'https://www.hotwater.com/support/'},
+    {brand:'Takagi', url:'https://www.takagi.us.com/support/'},
+    {brand:'Rinnai', url:'https://www.rinnai.us/support'},
+    {brand:'Navien', url:'https://www.navieninc.com/support'}
+  ],
+  'garbage_disposal': [
+    {brand:'InSinkErator', url:'https://insinkerator.com/support'},
+    {brand:'Moen', url:'https://www.moen.com/support'},
+    {brand:'Waste King', url:'https://waste-king.com/support/'},
+    {brand:'KitchenAid', url:'https://www.kitchenaid.com/support.html'},
+    {brand:'GE', url:'https://www.geappliancesparts.com/'},
+    {brand:'Whirlpool', url:'https://www.whirlpool.com/service-and-support.html'},
+    {brand:'Frigidaire', url:'https://www.frigidaire.com/support/'},
+    {brand:'American Standard', url:'https://www.americanstandard-us.com/support'}
+  ]
+};
+
+// ---- Decision Trees ----
+const DIAG_TREES = {
+
+  gas_tank: {
+    symptoms:[
+      {id:'no_hot', label:'No hot water'},
+      {id:'not_enough', label:'Not enough hot water'},
+      {id:'too_hot', label:'Water too hot'},
+      {id:'leaking', label:'Leaking / dripping'},
+      {id:'noise', label:'Strange noises'},
+      {id:'pilot', label:'Pilot won\'t stay lit'},
+      {id:'smell', label:'Rotten egg / gas smell'},
+      {id:'rusty', label:'Rusty or discolored water'},
+      {id:'slow', label:'Slow recovery'},
+      {id:'tco', label:'TCO tripped / unit shuts off'},
+    ],
+    trees:{
+      no_hot:[
+        {q:'Is the pilot light on?', yes:'pilot_on', no:'pilot_off'},
+        {id:'pilot_off', result:{
+          diagnosis:'Pilot light is out',
+          causes:['Thermocouple failure','Draft/wind blew it out','Gas supply issue','Dirty pilot orifice'],
+          steps:['Check gas supply valve is open','Try relighting pilot per label instructions','If pilot won\'t stay lit — thermocouple likely bad'],
+          parts:['Water heater thermocoupling','Water heater control valve'],
+          severity:'medium'
+        }},
+        {id:'pilot_on', q:'Is the gas valve/thermostat set above 120°F?', yes:'check_breaker', no:'turn_up'},
+        {id:'turn_up', result:{
+          diagnosis:'Thermostat set too low',
+          causes:['Thermostat accidentally turned down'],
+          steps:['Turn thermostat to desired temperature (120°F recommended)','Wait 1-2 hours for water to heat','Test hot water at tap'],
+          parts:[],
+          severity:'low'
+        }},
+        {id:'check_breaker', q:'Has the unit been working recently or is this a new installation?', yes:'check_sediment', no:'new_install'},
+        {id:'new_install', result:{
+          diagnosis:'New installation issue',
+          causes:['Gas not fully purged from lines','Incorrect gas pressure','Improper venting'],
+          steps:['Verify gas pressure at unit (3.5" WC natural gas, 11" WC propane)','Check all gas connections','Verify venting is correct and unobstructed','Call gas company if pressure issue suspected'],
+          parts:['Water heater gas connection'],
+          severity:'high'
+        }},
+        {id:'check_sediment', result:{
+          diagnosis:'Gas valve / burner assembly failure',
+          causes:['Faulty gas valve','Clogged burner orifice','Failed thermostat'],
+          steps:['Check burner flame — should be blue, not yellow/orange','Clean burner orifice if clogged','Test gas valve operation','Replace gas valve or burner assembly if defective'],
+          parts:['Water heater control valve','Water heater burner assembly'],
+          severity:'high'
+        }}
+      ],
+      not_enough:[
+        {q:'Is the unit undersized for household demand?', yes:'undersized', no:'check_dip'},
+        {id:'undersized', result:{
+          diagnosis:'Unit undersized for demand',
+          causes:['Tank too small for household size','High simultaneous demand'],
+          steps:['Calculate household hot water demand','Recommend 40-50 gal for 2-3 people, 50-80 gal for 4+ people','Consider upgrading unit or adding second unit'],
+          parts:['Supplied gas water heater'],
+          severity:'low'
+        }},
+        {id:'check_dip', q:'Is there sediment buildup (rumbling sounds when heating)?', yes:'sediment', no:'thermostat_low'},
+        {id:'sediment', result:{
+          diagnosis:'Sediment buildup reducing capacity',
+          causes:['Hard water mineral deposits on bottom of tank','Reduces heating efficiency and capacity'],
+          steps:['Flush tank — connect hose to drain valve, open relief valve, drain until clear','If sediment is severe, tank may need replacement','Install water softener to prevent recurrence'],
+          parts:['Water heater disposal fee'],
+          severity:'medium'
+        }},
+        {id:'thermostat_low', result:{
+          diagnosis:'Thermostat set too low or faulty',
+          causes:['Thermostat set below 120°F','Thermostat calibration off','Partially failed gas valve'],
+          steps:['Set thermostat to 120-125°F','Wait 2 hours and test','If still not hot enough, test thermostat accuracy','Replace gas valve/thermostat if needed'],
+          parts:['Water heater control valve'],
+          severity:'medium'
+        }}
+      ],
+      too_hot:[
+        {q:'Is the thermostat set above 120°F?', yes:'turn_down', no:'faulty_thermo'},
+        {id:'turn_down', result:{
+          diagnosis:'Thermostat set too high',
+          causes:['Thermostat set above recommended temperature'],
+          steps:['Turn thermostat to 120°F (marked as HOT on most units)','120°F prevents scalding and kills bacteria','Wait 2 hours and test'],
+          parts:[],
+          severity:'low'
+        }},
+        {id:'faulty_thermo', result:{
+          diagnosis:'Faulty thermostat / gas valve',
+          causes:['Thermostat not reading temperature correctly','Gas valve not closing at set temperature'],
+          steps:['Test water temperature at tap with thermometer','If over 130°F with thermostat at lowest setting, replace gas valve','Check T&P valve is operational'],
+          parts:['Water heater control valve','Water heater T&P valve (P&L)'],
+          severity:'high'
+        }}
+      ],
+      leaking:[
+        {q:'Is the leak coming from the T&P relief valve?', yes:'tp_leak', no:'check_fittings'},
+        {id:'tp_leak', q:'Is the T&P valve dripping continuously?', yes:'tp_replace', no:'tp_pressure'},
+        {id:'tp_pressure', result:{
+          diagnosis:'High water pressure causing T&P to open',
+          causes:['Water pressure over 80 PSI','No expansion tank on closed system','T&P valve worn'],
+          steps:['Check water pressure (should be 50-80 PSI)','Install pressure reducing valve if over 80 PSI','Install expansion tank on closed system','Replace T&P valve if worn'],
+          parts:['Water heater T&P valve (P&L)','Expansion tank 2 gallon'],
+          severity:'high'
+        }},
+        {id:'tp_replace', result:{
+          diagnosis:'T&P relief valve failure',
+          causes:['T&P valve worn or failed','Debris preventing proper seating'],
+          steps:['Replace T&P valve immediately — safety device','Test new valve after installation','Check discharge pipe is properly directed to drain'],
+          parts:['Water heater T&P valve (P&L)'],
+          severity:'high'
+        }},
+        {id:'check_fittings', q:'Is the leak coming from pipe connections or fittings?', yes:'fitting_leak', no:'tank_leak'},
+        {id:'fitting_leak', result:{
+          diagnosis:'Loose or corroded pipe connection',
+          causes:['Loose fittings','Corroded connections','Failed pipe dope or teflon tape'],
+          steps:['Tighten loose fittings','Replace corroded connections','Use proper pipe dope or teflon tape on threaded connections'],
+          parts:["Water heater repipe H/C with valve 10'","Water heater flexible connectors 3/4\""],
+          severity:'medium'
+        }},
+        {id:'tank_leak', result:{
+          diagnosis:'Tank is leaking — unit must be replaced',
+          causes:['Internal corrosion','Tank failure','Age (over 10 years)'],
+          steps:['Turn off gas supply immediately','Turn off cold water supply to unit','Drain tank','Replace water heater — tank leaks cannot be repaired'],
+          parts:['Supplied gas water heater','Water heater (labor only)','Water heater disposal fee','Water heater pickup and delivery'],
+          severity:'critical'
+        }}
+      ],
+      noise:[
+        {q:'Is it a rumbling or popping sound?', yes:'sediment_noise', no:'check_other'},
+        {id:'sediment_noise', result:{
+          diagnosis:'Sediment buildup causing rumbling/popping',
+          causes:['Mineral deposits on tank bottom','Water trapped under sediment boiling'],
+          steps:['Flush tank completely','Drain valve may be clogged — use wet/dry vac','If severe sediment, replacement may be needed','Install water softener to prevent'],
+          parts:['Water heater disposal fee'],
+          severity:'medium'
+        }},
+        {id:'check_other', q:'Is it a ticking or hammering sound?', yes:'water_hammer', no:'expansion_noise'},
+        {id:'water_hammer', result:{
+          diagnosis:'Water hammer / pipe expansion noise',
+          causes:['Water hammer from fast-closing valves','Loose pipes','High water pressure'],
+          steps:['Check and secure any loose pipes','Install water hammer arrestors','Check water pressure (max 80 PSI)','Install pressure reducing valve if needed'],
+          parts:['Expansion tank 2 gallon'],
+          severity:'low'
+        }},
+        {id:'expansion_noise', result:{
+          diagnosis:'Normal thermal expansion noise',
+          causes:['Metal expanding and contracting with temperature changes','More common in older units'],
+          steps:['If mild ticking — this is normal operation','Check that unit is properly secured','Ensure no pipes are rubbing against framing'],
+          parts:[],
+          severity:'low'
+        }}
+      ],
+      pilot:[
+        {q:'Does the pilot light at all?', yes:'lights_then_out', no:'wont_light'},
+        {id:'wont_light', q:'Is gas supply on and gas present at unit?', yes:'clogged_pilot', no:'no_gas'},
+        {id:'no_gas', result:{
+          diagnosis:'No gas supply to unit',
+          causes:['Gas supply valve closed','Gas meter off','Gas line issue'],
+          steps:['Check gas supply valve is fully open','Check other gas appliances work','Contact gas company if no gas to house','Check gas pressure — 3.5" WC natural gas'],
+          parts:['Water heater gas connection'],
+          severity:'high'
+        }},
+        {id:'clogged_pilot', result:{
+          diagnosis:'Clogged pilot orifice',
+          causes:['Dust and debris blocking pilot orifice','Spider webs (common in storage units)'],
+          steps:['Turn off gas completely','Clean pilot orifice with compressed air','Use thin wire to carefully clear orifice','Do not use anything that could enlarge the hole'],
+          parts:['Water heater burner assembly'],
+          severity:'medium'
+        }},
+        {id:'lights_then_out', q:'Does pilot stay lit while holding button but go out when released?', yes:'thermocouple', no:'draft'},
+        {id:'draft', result:{
+          diagnosis:'Draft or downdraft extinguishing pilot',
+          causes:['Wind entering through vent','Negative pressure in building','Improper venting'],
+          steps:['Check vent pipe for damage or obstructions','Check for negative pressure — open window near unit','Consider power vent or sealed combustion unit'],
+          parts:["Water heater metal vent 10'"],
+          severity:'medium'
+        }},
+        {id:'thermocouple', result:{
+          diagnosis:'Thermocouple failure',
+          causes:['Thermocouple worn out','Thermocouple not positioned correctly in pilot flame','Thermocouple connection loose'],
+          steps:['Check thermocouple tip is in pilot flame','Tighten thermocouple connection at gas valve','Replace thermocouple if still fails'],
+          parts:['Water heater thermocoupling'],
+          severity:'medium'
+        }}
+      ],
+      smell:[
+        {q:'Does it smell like rotten eggs (sulfur)?', yes:'sulfur', no:'burning'},
+        {id:'sulfur', q:'Is the smell coming from hot water only?', yes:'anode_rod', no:'gas_leak'},
+        {id:'gas_leak', result:{
+          diagnosis:'POSSIBLE GAS LEAK — URGENT',
+          causes:['Gas line leak','Fitting failure','Gas valve leak'],
+          steps:['EVACUATE THE AREA IMMEDIATELY','Do NOT operate any electrical switches','Do NOT use phone inside','Call gas company from outside','Do NOT re-enter until cleared by gas company'],
+          parts:[],
+          severity:'critical'
+        }},
+        {id:'anode_rod', result:{
+          diagnosis:'Hydrogen sulfide from anode rod reaction',
+          causes:['Magnesium anode rod reacting with sulfur in water','Common in areas with high sulfur well water'],
+          steps:['Replace magnesium anode rod with aluminum/zinc anode rod','Flush tank thoroughly','Shock tank with hydrogen peroxide solution','Consider whole-house water filtration'],
+          parts:['Water heater electric rebuild'],
+          severity:'low'
+        }},
+        {id:'burning', result:{
+          diagnosis:'Burning smell from unit',
+          causes:['Dust burning off on new unit','Debris near burner','Overheating'],
+          steps:['On new units, burning smell is normal for first few uses','Check for debris near burner area','Ensure clearances around unit are maintained (18" min from combustibles)','If persistent, inspect burner assembly'],
+          parts:['Water heater burner assembly'],
+          severity:'medium'
+        }}
+      ],
+      rusty:[
+        {q:'Is the discoloration only in hot water (not cold)?', yes:'tank_corrosion', no:'supply_issue'},
+        {id:'supply_issue', result:{
+          diagnosis:'Water supply issue',
+          causes:['Old iron pipes in home','Municipal water quality issue','Well water with high iron'],
+          steps:['Check cold water at another fixture','Contact water utility if municipal water','Consider whole-house filtration or water softener','Check pipes for corrosion'],
+          parts:[],
+          severity:'low'
+        }},
+        {id:'tank_corrosion', q:'Is unit more than 8 years old?', yes:'old_tank', no:'new_tank'},
+        {id:'old_tank', result:{
+          diagnosis:'Tank corrosion — unit should be replaced',
+          causes:['Failed anode rod allowing tank corrosion','End of service life','Internal rust'],
+          steps:['Unit is near end of life','Recommend replacement before tank fails','Flush tank and inspect anode rod','If anode completely consumed, replace unit'],
+          parts:['Supplied gas water heater','Water heater disposal fee'],
+          severity:'high'
+        }},
+        {id:'new_tank', result:{
+          diagnosis:'Depleted anode rod',
+          causes:['Anode rod consumed faster than normal','Aggressive water chemistry','High water usage'],
+          steps:['Inspect and replace anode rod','Flush tank completely until water runs clear','Check water chemistry — may need water softener'],
+          parts:['Water heater electric rebuild'],
+          severity:'medium'
+        }}
+      ],
+      tco:[
+        {result:{
+          diagnosis:'TCO (Thermal Cut-Off) Tripped',
+          causes:['Flammable vapor sensor tripped (common in garages)','Blocked combustion air supply','Faulty TCO device','Unit installed too close to floor in garage (must be 18" min)','Flammable vapors from paint, gasoline, solvents nearby'],
+          steps:['TCO is a safety device — do NOT bypass it','Remove unit from service until cause is found','Check for flammable vapors in area (gasoline, paint, solvents)','Verify unit is on 18" stand in garage','Ensure adequate combustion air supply','Replace TCO device if no vapors present and unit is properly installed','Reference: waterheatertimer.org for detailed TCO info'],
+          parts:['Water heater vapor sensor','Water heater control valve'],
+          severity:'high',
+          links:[{label:'TCO & Gas Water Heater Parts Guide',url:'http://waterheatertimer.org/basic-parts-for-gas-water-heater.html'}]
+        }}
+      ],
+      slow:[
+        {result:{
+          diagnosis:'Slow hot water recovery',
+          causes:['Undersized unit for demand','Sediment reducing efficiency','Low gas pressure','Faulty thermostat','Cold incoming water temperature in winter'],
+          steps:['Check gas pressure at unit (3.5" WC)','Flush sediment from tank','Verify thermostat is set to 120-125°F','Check first hour rating vs household demand','Consider upgrade to larger unit or tankless'],
+          parts:['Water heater control valve','Supplied gas water heater'],
+          severity:'medium'
+        }}
+      ]
+    }
+  },
+
+  electric_tank:{
+    symptoms:[
+      {id:'no_hot', label:'No hot water'},
+      {id:'not_enough', label:'Not enough hot water'},
+      {id:'too_hot', label:'Water too hot'},
+      {id:'leaking', label:'Leaking / dripping'},
+      {id:'noise', label:'Strange noises (popping/rumbling)'},
+      {id:'tripping', label:'Breaker keeps tripping'},
+      {id:'rusty', label:'Rusty or discolored water'},
+    ],
+    trees:{
+      no_hot:[
+        {q:'Is the circuit breaker on for the water heater?', yes:'breaker_on', no:'reset_breaker'},
+        {id:'reset_breaker', result:{
+          diagnosis:'Tripped circuit breaker',
+          causes:['Breaker tripped due to overload','Faulty element shorting out'],
+          steps:['Reset breaker at panel','If it trips again immediately — element likely shorted','Test elements for continuity','Replace shorted element'],
+          parts:['Water heater thermostat or element'],
+          severity:'medium'
+        }},
+        {id:'breaker_on', q:'Has the high limit / reset button been tripped?', yes:'reset_limit', no:'check_elements'},
+        {id:'reset_limit', result:{
+          diagnosis:'High limit switch tripped',
+          causes:['Water overheated (over 170°F)','Faulty thermostat not shutting off element','High limit switch failure'],
+          steps:['Press reset button on high limit switch (behind upper access panel)','If it trips repeatedly — thermostat is likely faulty','Replace thermostat if needed','Check element for shorts'],
+          parts:['Water heater thermostat or element','Water heater electric rebuild'],
+          severity:'medium'
+        }},
+        {id:'check_elements', result:{
+          diagnosis:'Failed heating element(s)',
+          causes:['Upper element failed (most common — only cold water)','Lower element failed (some hot then cold)','Both elements failed','Thermostat failure'],
+          steps:['Turn off power at breaker','Test elements with multimeter (should read 10-16 ohms)','Replace failed element(s)','Test thermostats — replace if not switching correctly','Upper element controls first hot water, lower handles recovery'],
+          parts:['Water heater thermostat or element','Water heater electric rebuild'],
+          severity:'medium'
+        }}
+      ],
+      not_enough:[
+        {q:'Does hot water run out quickly then slowly recover?', yes:'lower_element', no:'check_size'},
+        {id:'lower_element', result:{
+          diagnosis:'Lower heating element failure',
+          causes:['Lower element failed — upper element alone can\'t keep up','Heavy sediment on lower element'],
+          steps:['Turn off power at breaker','Test lower element with multimeter (10-16 ohms = good)','Replace lower element if open circuit','Flush sediment from tank after repair'],
+          parts:['Water heater thermostat or element'],
+          severity:'medium'
+        }},
+        {id:'check_size', result:{
+          diagnosis:'Unit undersized or thermostat too low',
+          causes:['Tank too small for demand','Thermostat set below 120°F','Cold water inlet mixing','Sediment buildup'],
+          steps:['Set thermostat to 120-125°F','Flush sediment from tank','Calculate demand vs tank first hour rating','Consider upgrade to larger unit'],
+          parts:['Supplied electric water heater'],
+          severity:'low'
+        }}
+      ],
+      too_hot:[
+        {q:'Is thermostat set above 120°F?', yes:'turn_down', no:'faulty_thermo'},
+        {id:'turn_down', result:{
+          diagnosis:'Thermostat set too high',
+          causes:['Thermostat turned up too high'],
+          steps:['Turn both thermostats to 120°F','Upper thermostat controls upper element and high limit','Lower thermostat controls lower element','Wait 2 hours and test'],
+          parts:[],
+          severity:'low'
+        }},
+        {id:'faulty_thermo', result:{
+          diagnosis:'Faulty thermostat — stuck in heating',
+          causes:['Thermostat contacts stuck closed','Not reading temperature correctly'],
+          steps:['Replace both thermostats','Check high limit switch operation','Test water temperature with thermometer'],
+          parts:['Water heater thermostat or element','Water heater electric rebuild'],
+          severity:'high'
+        }}
+      ],
+      leaking:[
+        {q:'Is leak from T&P relief valve?', yes:'tp_leak', no:'other_leak'},
+        {id:'tp_leak', result:{
+          diagnosis:'T&P valve leaking — safety issue',
+          causes:['High water pressure (over 80 PSI)','No expansion tank on closed system','T&P valve worn or failed'],
+          steps:['Check water pressure','Install expansion tank if on closed system','Replace T&P valve','Ensure discharge pipe goes to proper drain'],
+          parts:['Water heater T&P valve (P&L)','Expansion tank 2 gallon'],
+          severity:'high'
+        }},
+        {id:'other_leak', q:'Is it from element gaskets or drain valve?', yes:'element_leak', no:'tank_leak'},
+        {id:'element_leak', result:{
+          diagnosis:'Element gasket or drain valve leak',
+          causes:['Element gasket worn','Drain valve corroded or loose'],
+          steps:['Turn off power and water supply','Replace element gasket — drain tank first','Replace drain valve if corroded or won\'t seal'],
+          parts:['Water heater thermostat or element'],
+          severity:'medium'
+        }},
+        {id:'tank_leak', result:{
+          diagnosis:'Tank failure — replacement required',
+          causes:['Internal corrosion','Age (over 10 years)','Tank wall failure'],
+          steps:['Turn off power at breaker immediately','Turn off cold water supply','Drain and replace unit','Tank leaks cannot be repaired'],
+          parts:['Supplied electric water heater','Water heater (labor only)','Water heater disposal fee','Water heater pickup and delivery'],
+          severity:'critical'
+        }}
+      ],
+      noise:[
+        {result:{
+          diagnosis:'Sediment buildup — rumbling/popping',
+          causes:['Mineral deposits on lower element','Water boiling under sediment layer','Hard water buildup'],
+          steps:['Flush tank thoroughly','May need to drain and manually clean elements','Replace element if badly scaled','Install water softener to prevent recurrence'],
+          parts:['Water heater thermostat or element'],
+          severity:'medium'
+        }}
+      ],
+      tripping:[
+        {q:'Does breaker trip immediately when reset?', yes:'shorted_element', no:'overload'},
+        {id:'shorted_element', result:{
+          diagnosis:'Shorted heating element',
+          causes:['Element ground fault','Element casing cracked'],
+          steps:['Turn off power','Test each element with multimeter — check for ground fault','Element should show no continuity between element and ground','Replace shorted element immediately'],
+          parts:['Water heater thermostat or element','Water heater electric rebuild'],
+          severity:'high'
+        }},
+        {id:'overload', result:{
+          diagnosis:'Undersized circuit or loose connection',
+          causes:['Circuit undersized for water heater (needs 30A/240V for most units)','Loose wire connection causing arcing','Weak breaker'],
+          steps:['Verify circuit amperage matches water heater nameplate','Check all wire connections are tight','Replace breaker if weak or old','Have electrician verify circuit if needed'],
+          parts:[],
+          severity:'high'
+        }}
+      ],
+      rusty:[
+        {q:'Is rust only in hot water?', yes:'anode_tank', no:'supply'},
+        {id:'supply', result:{
+          diagnosis:'Cold water supply issue',
+          causes:['Old iron pipes','Municipal or well water quality'],
+          steps:['Test cold water at another fixture','Contact utility if municipal water','Consider whole-house filtration'],
+          parts:[],
+          severity:'low'
+        }},
+        {id:'anode_tank', result:{
+          diagnosis:'Failed anode rod / tank corrosion',
+          causes:['Anode rod depleted','Internal tank corrosion beginning'],
+          steps:['Inspect and replace anode rod','Flush tank until clear','If tank over 8 years old, consider replacement','Discolored hot water often means tank is near end of life'],
+          parts:['Supplied electric water heater'],
+          severity:'high'
+        }}
+      ]
+    }
+  },
+
+  gas_tankless:{
+    symptoms:[
+      {id:'no_hot', label:'No hot water / unit won\'t fire'},
+      {id:'cold_sandwich', label:'Cold water sandwich effect'},
+      {id:'fluctuating', label:'Fluctuating water temperature'},
+      {id:'error_code', label:'Error code displayed'},
+      {id:'leaking', label:'Leaking'},
+      {id:'low_flow', label:'Low hot water flow'},
+      {id:'noise', label:'Unusual noises'},
+    ],
+    trees:{
+      no_hot:[
+        {q:'Is there an error code on the display?', yes:'error_refer', no:'check_gas'},
+        {id:'error_refer', result:{
+          diagnosis:'Unit showing error code',
+          causes:['Various system faults depending on code'],
+          steps:['Note the exact error code','Look up code in manufacturer manual (see guide links below)','Common codes: ignition failure, overheat, flow sensor, gas pressure','Reset unit by turning off then on — clear temporary faults'],
+          parts:['Water heater control valve','Water heater burner assembly'],
+          severity:'medium'
+        }},
+        {id:'check_gas', q:'Is gas supply on and adequate pressure available?', yes:'check_flow', no:'gas_issue'},
+        {id:'gas_issue', result:{
+          diagnosis:'Insufficient gas supply',
+          causes:['Gas valve closed','Undersized gas line for tankless demand','Low gas pressure'],
+          steps:['Verify gas supply valve is fully open','Tankless units require higher BTU — check line sizing','Gas pressure must be 3.5-5" WC (natural gas) or 8-11" WC (propane)','May need gas line upsizing by plumber/gas company'],
+          parts:['Water heater gas connection'],
+          severity:'high'
+        }},
+        {id:'check_flow', q:'Is minimum flow rate being met? (usually 0.5-0.75 GPM)', yes:'ignition', no:'flow_issue'},
+        {id:'flow_issue', result:{
+          diagnosis:'Flow rate too low to activate unit',
+          causes:['Low water pressure','Partially closed valve','Clogged inlet filter screen','Flow sensor dirty'],
+          steps:['Check water pressure (min 15-20 PSI typically needed)','Clean inlet filter screen','Check all supply valves are fully open','Clean flow sensor if accessible'],
+          parts:['W/H flood sensor shutoff valve 3/4"'],
+          severity:'medium'
+        }},
+        {id:'ignition', result:{
+          diagnosis:'Ignition failure',
+          causes:['Dirty or failed igniter','Gas valve issue','Venting problem causing lockout','Scale buildup on heat exchanger'],
+          steps:['Check venting for obstructions (bird nests, debris)','Descale heat exchanger (annual maintenance)','Check igniter spark','Inspect gas valve operation','Reset unit and retry'],
+          parts:['Water heater burner assembly','Water heater control valve'],
+          severity:'high'
+        }}
+      ],
+      cold_sandwich:[
+        {result:{
+          diagnosis:'Cold water sandwich effect (normal for tankless)',
+          causes:['Residual hot water in pipes followed by cold then hot again','Normal characteristic of tankless systems','More noticeable when unit was recently used'],
+          steps:['This is normal behavior for tankless units','Brief cold burst between hot bursts is expected','Can be reduced by installing a small buffer tank','Allow extra time for temperature to stabilize'],
+          parts:[],
+          severity:'low'
+        }}
+      ],
+      fluctuating:[
+        {q:'Does temperature fluctuate with changes in flow rate?', yes:'flow_fluctuation', no:'check_pressure'},
+        {id:'flow_fluctuation', result:{
+          diagnosis:'Flow rate variations causing temperature swings',
+          causes:['Simultaneous hot water use','Pressure fluctuations','Modulating valve issue'],
+          steps:['Install thermostatic mixing valve to stabilize output','Check water pressure for fluctuations','Clean or replace flow sensor','May need recirculation pump for consistent temperature'],
+          parts:['Water heater control valve'],
+          severity:'medium'
+        }},
+        {id:'check_pressure', result:{
+          diagnosis:'Scale buildup reducing heat exchanger efficiency',
+          causes:['Mineral scale on heat exchanger','Reduced flow through exchanger'],
+          steps:['Descale heat exchanger with white vinegar or descaling solution','Annual descaling recommended in hard water areas','Check inlet filter screen','Flush unit per manufacturer instructions'],
+          parts:['Water heater burner assembly'],
+          severity:'medium'
+        }}
+      ],
+      error_code:[
+        {result:{
+          diagnosis:'Error code — refer to manufacturer guide',
+          causes:['System fault specific to error code'],
+          steps:['Note exact error code from display','Consult manufacturer guide (links below)','Common fixes: reset unit, check venting, check gas pressure, descale','If code persists after reset, professional service needed'],
+          parts:['Water heater control valve','Water heater burner assembly'],
+          severity:'medium'
+        }}
+      ],
+      leaking:[
+        {q:'Is leak from pressure relief valve?', yes:'relief_leak', no:'connection_leak'},
+        {id:'relief_leak', result:{
+          diagnosis:'Pressure relief valve leaking',
+          causes:['High water pressure','Valve worn or failed','Thermal expansion'],
+          steps:['Check water pressure — must be under 80 PSI','Install expansion tank if on closed system','Replace pressure relief valve','Check for scale clogging valve seat'],
+          parts:['Water heater T&P valve (P&L)','Expansion tank 2 gallon'],
+          severity:'high'
+        }},
+        {id:'connection_leak', result:{
+          diagnosis:'Connection or fitting leak',
+          causes:['Loose fitting','Corroded connections','Failed heat exchanger (internal leak)'],
+          steps:['Check all inlet/outlet connections','Tighten or replace fittings','If leak from inside unit — heat exchanger may be failed','Internal leaks typically require unit replacement'],
+          parts:["Water heater repipe H/C with valve 10'","Water heater flexible connectors 3/4\""],
+          severity:'high'
+        }}
+      ],
+      low_flow:[
+        {result:{
+          diagnosis:'Low hot water flow rate',
+          causes:['Clogged inlet filter screen','Scale buildup in heat exchanger','Low water pressure','Flow restrictor clogged'],
+          steps:['Clean inlet filter screen — remove and rinse','Descale heat exchanger','Check water pressure at unit','Remove and clean flow restrictor','Check for partially closed valves'],
+          parts:['Water heater burner assembly'],
+          severity:'medium'
+        }}
+      ],
+      noise:[
+        {q:'Is it a clicking sound without ignition?', yes:'ignition_noise', no:'other_noise'},
+        {id:'ignition_noise', result:{
+          diagnosis:'Ignition clicking without firing',
+          causes:['Gas supply issue','Igniter dirty or failed','Flame sensor dirty'],
+          steps:['Check gas supply','Clean igniter electrodes','Clean flame sensor rod','Check igniter gap'],
+          parts:['Water heater burner assembly'],
+          severity:'medium'
+        }},
+        {id:'other_noise', result:{
+          diagnosis:'Scale or vibration noise',
+          causes:['Scale buildup in heat exchanger','Loose component','Water hammer'],
+          steps:['Descale heat exchanger','Check for loose panels or components','Install water hammer arrestor if hammering','Secure any loose pipes'],
+          parts:['Water heater burner assembly'],
+          severity:'low'
+        }}
+      ]
+    }
+  },
+
+  electric_tankless:{
+    symptoms:[
+      {id:'no_hot', label:'No hot water'},
+      {id:'not_enough', label:'Not enough hot water / low temp'},
+      {id:'tripping', label:'Breaker tripping'},
+      {id:'error_code', label:'Error code / indicator light'},
+      {id:'leaking', label:'Leaking'},
+    ],
+    trees:{
+      no_hot:[
+        {q:'Is power on at the breaker panel?', yes:'check_reset', no:'breaker_off'},
+        {id:'breaker_off', result:{
+          diagnosis:'No power to unit',
+          causes:['Breaker tripped or off','Loose wiring connection','GFCI tripped'],
+          steps:['Reset breaker at panel','Check for GFCI outlet if applicable','Verify wire connections at unit are tight','Electric tankless requires dedicated 240V circuit — typically 2-4 breakers'],
+          parts:[],
+          severity:'medium'
+        }},
+        {id:'check_reset', q:'Is the unit\'s internal reset tripped?', yes:'reset_unit', no:'check_elements'},
+        {id:'reset_unit', result:{
+          diagnosis:'Thermal overload / high limit tripped',
+          causes:['Unit overheated','Restricted flow','Scale buildup'],
+          steps:['Press reset button on unit','Check for scale buildup on heating elements','Ensure adequate flow rate is being maintained','If trips repeatedly — element or thermostat issue'],
+          parts:['Water heater thermostat or element','Water heater electric rebuild'],
+          severity:'medium'
+        }},
+        {id:'check_elements', result:{
+          diagnosis:'Failed heating element',
+          causes:['Element failure (most common cause)','Control board failure','Wiring fault'],
+          steps:['Turn off all power to unit','Test elements with multimeter','Replace failed elements','Check control board for fault codes','Verify incoming voltage is correct (240V)'],
+          parts:['Water heater thermostat or element','Water heater electric rebuild'],
+          severity:'high'
+        }}
+      ],
+      not_enough:[
+        {q:'Is the unit sized correctly for demand? (check GPM rating)', yes:'check_temp', no:'undersized'},
+        {id:'undersized', result:{
+          diagnosis:'Unit undersized for demand',
+          causes:['GPM rating too low for simultaneous fixture use','Cold groundwater temperature reducing output','Multiple fixtures running simultaneously'],
+          steps:['Check unit GPM rating vs demand','In Texas, groundwater ~65°F — easier to heat than northern states','Reduce simultaneous hot water use','Consider adding second unit or upgrading'],
+          parts:['Water heater electric rebuild'],
+          severity:'low'
+        }},
+        {id:'check_temp', result:{
+          diagnosis:'Scale on elements reducing efficiency',
+          causes:['Mineral scale on heating elements','Reduced heat transfer','Elements partially failed'],
+          steps:['Descale elements if accessible','Test element resistance — replace if out of spec','Check incoming voltage — low voltage reduces output','Verify temperature setting on unit'],
+          parts:['Water heater thermostat or element'],
+          severity:'medium'
+        }}
+      ],
+      tripping:[
+        {q:'Is it a single breaker or multiple breakers tripping?', yes:'single_trip', no:'multi_trip'},
+        {id:'single_trip', result:{
+          diagnosis:'Single element shorted or circuit fault',
+          causes:['Shorted heating element','Loose wire connection arcing','Undersized breaker'],
+          steps:['Test element for ground fault with multimeter','Check wire connection tightness','Verify breaker amperage matches unit requirements','Replace faulty element or breaker'],
+          parts:['Water heater thermostat or element','Water heater electric rebuild'],
+          severity:'high'
+        }},
+        {id:'multi_trip', result:{
+          diagnosis:'Unit drawing too much current',
+          causes:['Shorted element causing overcurrent','Undersized electrical service','Low voltage causing high current draw'],
+          steps:['Check incoming voltage at unit (should be 240V ±10%)','Test all elements for shorts','Contact electrician to verify service capacity','Electric tankless requires significant amperage — may need service upgrade'],
+          parts:['Water heater electric rebuild'],
+          severity:'high'
+        }}
+      ],
+      error_code:[
+        {result:{
+          diagnosis:'Error code / fault indicator',
+          causes:['Various faults per manufacturer'],
+          steps:['Note exact error code or indicator pattern','Consult manufacturer guide (links below)','Common issues: overtemp, low flow, element fault','Reset unit and retry — clear temporary faults'],
+          parts:['Water heater electric rebuild'],
+          severity:'medium'
+        }}
+      ],
+      leaking:[
+        {result:{
+          diagnosis:'Leak from electric tankless unit',
+          causes:['Failed element gasket','Loose fitting','Internal component failure'],
+          steps:['Turn off ALL power to unit at breaker immediately','Turn off water supply','Locate source of leak','Replace element gasket or fitting','Internal leaks may require unit replacement'],
+          parts:["Water heater repipe H/C with valve 10'","Water heater flexible connectors 3/4\""],
+          severity:'high'
+        }}
+      ]
+    }
+  },
+
+  garbage_disposal:{
+    symptoms:[
+      {id:'no_power', label:'Won\'t turn on / no power'},
+      {id:'hums', label:'Hums but won\'t spin'},
+      {id:'leaking', label:'Leaking'},
+      {id:'slow', label:'Drains slowly / clogs'},
+      {id:'noise', label:'Loud grinding / rattling noise'},
+      {id:'odor', label:'Bad odor'},
+      {id:'reset', label:'Keeps tripping reset button'},
+    ],
+    trees:{
+      no_power:[
+        {q:'Is the wall switch working (check with voltage tester)?', yes:'check_reset', no:'switch_issue'},
+        {id:'switch_issue', result:{
+          diagnosis:'Wall switch or wiring issue',
+          causes:['Failed wall switch','Loose wire connection','GFCI tripped'],
+          steps:['Check GFCI outlet under sink — reset if tripped','Test wall switch with voltage tester','Replace switch if faulty','Check wire connections at switch and disposal'],
+          parts:['Garbage disposal 1/2 HP'],
+          severity:'medium'
+        }},
+        {id:'check_reset', q:'Has the reset button on bottom of disposal been pushed?', yes:'still_no_power', no:'press_reset'},
+        {id:'press_reset', result:{
+          diagnosis:'Thermal overload tripped',
+          causes:['Disposal overheated from jam or extended use','Overload protection activated'],
+          steps:['Press red reset button on bottom of unit firmly until it clicks','Wait 15 minutes if recently overheated','Clear any jam first (use hex wrench in bottom socket)','Try switch again after reset'],
+          parts:[],
+          severity:'low'
+        }},
+        {id:'still_no_power', result:{
+          diagnosis:'Disposal motor failed',
+          causes:['Motor burned out','Internal wiring failure','Disposal at end of life'],
+          steps:['Verify power is reaching unit with multimeter','If power present but no response — motor failed','Replace disposal unit'],
+          parts:['Garbage disposal 1/2 HP','Garbage disposal 3/4 HP'],
+          severity:'high'
+        }}
+      ],
+      hums:[
+        {result:{
+          diagnosis:'Disposal jammed',
+          causes:['Foreign object in grinding chamber','Food material wedged between impeller and grinding ring','Impeller plate seized'],
+          steps:['TURN OFF POWER at switch AND unplug unit','Never put hand inside disposal','Insert 1/4" hex (Allen) wrench in socket on bottom of unit','Work wrench back and forth to free impeller plate','Remove jam from top with tongs (not hands)','Push reset button, restore power, test'],
+          parts:[],
+          severity:'low'
+        }}
+      ],
+      leaking:[
+        {q:'Where is the leak coming from?', yes:'top_leak', no:'bottom_leak'},
+        {id:'top_leak', result:{
+          diagnosis:'Sink flange / mounting leak',
+          causes:['Loose mounting bolts','Failed plumber\'s putty at sink flange','Sink flange corroded'],
+          steps:['Tighten three mounting bolts evenly','If still leaks, remove and reseal with plumber\'s putty','Replace sink flange if corroded'],
+          parts:['Garbage disposal 1/2 HP'],
+          severity:'medium'
+        }},
+        {id:'bottom_leak', q:'Is leak from discharge pipe or bottom of unit?', yes:'discharge_leak', no:'internal_leak'},
+        {id:'discharge_leak', result:{
+          diagnosis:'Discharge pipe connection leak',
+          causes:['Loose discharge pipe clamp or slip joint','Failed gasket at discharge outlet'],
+          steps:['Tighten discharge pipe clamp','Replace discharge pipe gasket','Check dishwasher drain connection if applicable'],
+          parts:['Sink drain assembly'],
+          severity:'low'
+        }},
+        {id:'internal_leak', result:{
+          diagnosis:'Internal seal failure — replacement needed',
+          causes:['Internal motor seals worn','Cracked shell or grinding chamber','Age and corrosion'],
+          steps:['Internal leaks from bottom of unit = seal failure','Cannot be repaired — replacement required','Replace disposal unit'],
+          parts:['Garbage disposal 1/2 HP','Garbage disposal 3/4 HP'],
+          severity:'high'
+        }}
+      ],
+      slow:[
+        {result:{
+          diagnosis:'Partial clog or buildup in drain line',
+          causes:['Grease buildup in drain line','Insufficient water flow while grinding','Improper use (fibrous foods, bones, etc.)'],
+          steps:['Run cold water for 30 seconds before and after use','Grind ice cubes to clean grinding ring','Pour baking soda and vinegar down drain — let sit 30 min','Use drain cleaner approved for disposals','Check P-trap for buildup','If recurring — may need drain line snaked'],
+          parts:['Sewer main drain line cleanout','P-trap replacement'],
+          severity:'low'
+        }}
+      ],
+      noise:[
+        {q:'Is there a rattling/clunking sound?', yes:'foreign_object', no:'worn_bearings'},
+        {id:'foreign_object', result:{
+          diagnosis:'Foreign object in disposal',
+          causes:['Utensil, bottle cap, bone, or other hard object','Glass or ceramic shard'],
+          steps:['Turn off power at switch AND unplug','Use flashlight to inspect chamber','Remove foreign object with tongs — never use hands','Test after removal'],
+          parts:[],
+          severity:'low'
+        }},
+        {id:'worn_bearings', result:{
+          diagnosis:'Worn motor bearings or grinding components',
+          causes:['Normal wear over time','Grinding ring worn smooth','Motor bearings failing'],
+          steps:['If grinding is ineffective — grinding ring worn','Loud motor noise — bearings failing','Disposal nearing end of life','Recommend replacement'],
+          parts:['Garbage disposal 1/2 HP','Garbage disposal 3/4 HP'],
+          severity:'medium'
+        }}
+      ],
+      odor:[
+        {result:{
+          diagnosis:'Food buildup causing odor',
+          causes:['Food particles trapped under splash guard','Buildup in grinding chamber','Slime in drain line'],
+          steps:['Clean under splash guard with brush and dish soap','Grind ice cubes and rock salt','Grind citrus peels (lemon, orange) for freshness','Pour baking soda then vinegar — let sit, flush with hot water','Run disposal with water more thoroughly after use'],
+          parts:[],
+          severity:'low'
+        }}
+      ],
+      reset:[
+        {result:{
+          diagnosis:'Disposal overloading / jamming repeatedly',
+          causes:['Putting improper foods down disposal (fibrous, hard, starchy)','Insufficient water flow','Disposal undersized for use','Old unit losing efficiency'],
+          steps:['Do NOT put: potato peels, celery, artichokes, bones, grease, coffee grounds, pasta, rice','ALWAYS run cold water before/during/after grinding','Grind small amounts at a time','If unit is 10+ years old — replace with larger HP unit'],
+          parts:['Garbage disposal 3/4 HP'],
+          severity:'medium'
+        }}
+      ]
+    }
+  }
+};
+
+// ---- Price Guide lookup for diagnosis ----
+function getPriceItems(partNames){
+  const allItems=[...BASE_PG,...customPG];
+  return partNames.map(name=>{
+    const nameLower=name.toLowerCase();
+    // Try exact match first
+    let found=allItems.find(i=>i.name.toLowerCase()===nameLower);
+    // Try contains match (item name contains search term or vice versa)
+    if(!found)found=allItems.find(i=>i.name.toLowerCase().includes(nameLower));
+    if(!found)found=allItems.find(i=>nameLower.includes(i.name.toLowerCase()));
+    // Try matching key words (at least 3 chars, skip common words)
+    if(!found){
+      const skipWords=['the','and','for','with','per','from','into','water','heater'];
+      const keywords=nameLower.split(/\s+/).filter(w=>w.length>3&&!skipWords.includes(w));
+      if(keywords.length>0){
+        found=allItems.find(i=>{
+          const iLower=i.name.toLowerCase();
+          // Must match at least 2 keywords OR one very specific keyword
+          const matches=keywords.filter(k=>iLower.includes(k));
+          return matches.length>=2||(matches.length===1&&keywords.length===1&&matches[0].length>5);
+        });
+      }
+    }
+    return found?{...found}:{name,price:0,cat:'Other'};
+  }).filter(i=>i.price>0);
+}
+
+// ---- Diagnosis navigation ----
+function startDiag(equipType){
+  diagEquipment=equipType;
+  diagStep=0;
+  diagPath=[];
+  diagAnswers=[];
+  diagSymptom='';
+  showDiagScreen('symptom');
+}
+
+function showDiagScreen(screen){
+  const content=document.getElementById('diag-content');
+  const tree=DIAG_TREES[diagEquipment];
+  if(!tree){content.innerHTML='<div class="empty-state"><p>Equipment type not found</p></div>';return;}
+
+  if(screen==='symptom'){
+    const equipLabels={
+      gas_tank:'Gas Tank Water Heater',
+      electric_tank:'Electric Tank Water Heater',
+      gas_tankless:'Gas Tankless Water Heater',
+      electric_tankless:'Electric Tankless Water Heater',
+      garbage_disposal:'Garbage Disposal'
+    };
+    content.innerHTML=`
+      <div style="background:#e8f4fd;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+        <div style="font-size:14px;font-weight:700;color:#1a5fa8">🔧 ${equipLabels[diagEquipment]}</div>
+        <div style="font-size:12px;color:#64748b;margin-top:2px">Select the symptom or problem</div>
+      </div>
+      <div style="display:grid;gap:8px">
+        ${tree.symptoms.map(s=>`
+          <button onclick="selectSymptom('${s.id}')" style="background:white;border:1.5px solid #e2e8f0;border-radius:10px;padding:12px 14px;text-align:left;cursor:pointer;font-size:14px;font-family:inherit;color:#1a1a1a;display:flex;align-items:center;gap:10px">
+            <span style="font-size:18px">⚠️</span> ${s.label}
+          </button>`).join('')}
+      </div>
+      <button onclick="showDiagHome()" style="width:100%;margin-top:12px;background:#f1f5f9;border:none;border-radius:10px;padding:10px;font-size:13px;color:#64748b;cursor:pointer;font-family:inherit">← Back to Equipment Selection</button>`;
+  }
+}
+
+function selectSymptom(symptomId){
+  diagSymptom=symptomId;
+  const tree=DIAG_TREES[diagEquipment];
+  const steps=tree.trees[symptomId];
+  if(!steps){showResult({diagnosis:'Diagnosis not available',causes:['Contact manufacturer'],steps:['Refer to manufacturer guide'],parts:[],severity:'low'});return;}
+  // Check if first step is direct result
+  if(steps[0]&&steps[0].result){
+    showResult(steps[0].result);
+  } else if(steps[0]&&steps[0].q){
+    showQuestion(steps,0);
+  }
+}
+
+function showQuestion(steps,stepIdx){
+  const step=steps[stepIdx];
+  if(!step)return;
+  diagPath=steps;
+  diagStep=stepIdx;
+  const content=document.getElementById('diag-content');
+  const progress=Math.round((stepIdx/(steps.length||3))*100);
+  content.innerHTML=`
+    <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:4px">DIAGNOSTIC QUESTION</div>
+      <div style="background:#e2e8f0;border-radius:999px;height:6px;margin-bottom:10px"><div style="background:#1a5fa8;height:6px;border-radius:999px;width:${progress}%"></div></div>
+      <div style="font-size:15px;font-weight:600;color:#1a1a1a;line-height:1.4">${step.q}</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <button onclick="answerQuestion('yes')" style="background:#f0fdf4;border:2px solid #86efac;border-radius:12px;padding:16px;font-size:15px;font-weight:700;color:#0d9e6e;cursor:pointer;font-family:inherit">✅ Yes</button>
+      <button onclick="answerQuestion('no')" style="background:#fef2f2;border:2px solid #fca5a5;border-radius:12px;padding:16px;font-size:15px;font-weight:700;color:#dc2626;cursor:pointer;font-family:inherit">❌ No</button>
+    </div>
+    <button onclick="startDiag('${diagEquipment}')" style="width:100%;background:#f1f5f9;border:none;border-radius:10px;padding:10px;font-size:13px;color:#64748b;cursor:pointer;font-family:inherit">↺ Start Over</button>`;
+}
+
+function answerQuestion(answer){
+  const steps=diagPath;
+  const step=steps[diagStep];
+  if(!step)return;
+  const nextId=answer==='yes'?step.yes:step.no;
+  if(!nextId){showResult({diagnosis:'Unable to determine',causes:['Manual inspection needed'],steps:['Contact manufacturer support'],parts:[],severity:'medium'});return;}
+  // Find next step by id
+  const nextStep=steps.find(s=>s.id===nextId);
+  if(nextStep){
+    if(nextStep.result){showResult(nextStep.result);}
+    else if(nextStep.q){
+      const idx=steps.indexOf(nextStep);
+      showQuestion(steps,idx);
+    }
+  }
+}
+
+function showResult(result){
+  savedDiagnosis=result;
+  const sevColors={low:'#0d9e6e',medium:'#f59e0b',high:'#ea580c',critical:'#dc2626'};
+  const sevLabels={low:'LOW',medium:'MEDIUM',high:'HIGH',critical:'CRITICAL — URGENT'};
+  const sevBg={low:'#f0fdf4',medium:'#fffbeb',high:'#fff7ed',critical:'#fef2f2'};
+  const sev=result.severity||'medium';
+  const priceItems=getPriceItems(result.parts||[]);
+  const totalEstimate=priceItems.reduce((s,i)=>s+i.price,0);
+  const mfgLinks=MFG_LINKS[diagEquipment]||[];
+  const equipLabels={gas_tank:'Gas Tank Water Heater',electric_tank:'Electric Tank Water Heater',gas_tankless:'Gas Tankless Water Heater',electric_tankless:'Electric Tankless Water Heater',garbage_disposal:'Garbage Disposal'};
+
+  const content=document.getElementById('diag-content');
+  content.innerHTML=`
+    <div style="background:${sevBg[sev]};border:2px solid ${sevColors[sev]};border-radius:12px;padding:14px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <div style="font-size:15px;font-weight:700;color:#1a1a1a">${result.diagnosis}</div>
+        <span style="background:${sevColors[sev]};color:white;font-size:10px;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap;margin-left:8px">${sevLabels[sev]}</span>
+      </div>
+    </div>
+
+    ${result.causes&&result.causes.length?`
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">Possible Causes</div>
+      ${result.causes.map(c=>`<div style="font-size:13px;color:#475569;padding:4px 0;border-bottom:1px solid #f1f5f9">• ${c}</div>`).join('')}
+    </div>`:''}
+    ${result.links&&result.links.length?`
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">Reference Links</div>
+      ${result.links.map(l=>`<a href="${l.url}" target="_blank" style="display:block;padding:8px 0;font-size:13px;color:#1a5fa8;font-weight:600;text-decoration:none;border-bottom:1px solid #f1f5f9">🔗 ${l.label}</a>`).join('')}
+    </div>`:''}
+
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">Recommended Steps</div>
+      ${result.steps.map((s,i)=>`<div style="font-size:13px;color:#1a1a1a;padding:6px 0;border-bottom:1px solid #f1f5f9;display:flex;gap:8px"><span style="background:#1a5fa8;color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">${i+1}</span>${s}</div>`).join('')}
+    </div>
+
+    ${priceItems.length?`
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">Parts & Estimated Cost</div>
+      ${priceItems.map(p=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid #f1f5f9"><span>${p.name}</span><span style="font-weight:600;color:#1a5fa8">$${p.price.toFixed(2)}</span></div>`).join('')}
+      <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;color:#1a5fa8;padding-top:8px;margin-top:4px">
+        <span>Estimated Total</span><span>$${totalEstimate.toFixed(2)}</span>
+      </div>
+      <button onclick="addDiagToInvoice()" style="width:100%;margin-top:10px;background:#0d9e6e;color:white;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">📄 Add Parts to Invoice</button>
+    </div>`:''}
+
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">Manufacturer Support Guides</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${mfgLinks.map(m=>`<a href="${m.url}" target="_blank" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px;font-size:12px;font-weight:600;color:#1a5fa8;text-decoration:none;text-align:center">${m.brand}</a>`).join('')}
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <button onclick="saveDiagToWO()" style="background:#7c3aed;color:white;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🔧 Save to Work Order</button>
+      <button onclick="startDiag('${diagEquipment}')" style="background:#f1f5f9;color:#475569;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">↺ New Diagnosis</button>
+    </div>
+    <button onclick="showDiagHome()" style="width:100%;background:#f1f5f9;border:none;border-radius:10px;padding:10px;font-size:13px;color:#64748b;cursor:pointer;font-family:inherit">← Back to Equipment Selection</button>`;
+}
+
+function addDiagToInvoice(){
+  if(!savedDiagnosis)return;
+  const priceItems=getPriceItems(savedDiagnosis.parts||[]);
+  if(!priceItems.length){toast('No price guide items found for this diagnosis');return;}
+  showTab('doc');
+  priceItems.forEach(p=>addItem(p.name,1,p.price));
+  if(savedDiagnosis.diagnosis)document.getElementById('notes').value=(document.getElementById('notes').value?document.getElementById('notes').value+'\n':'')+diagEquipment.replace('_',' ').toUpperCase()+': '+savedDiagnosis.diagnosis;
+  toast('Parts added to invoice! ✅');
+}
+
+function saveDiagToWO(){
+  if(!savedDiagnosis)return;
+  showTab('workorder');
+  const existing=document.getElementById('wo-problem').value;
+  const diagText='DIAGNOSIS: '+savedDiagnosis.diagnosis+'\n\nCAUSES:\n'+savedDiagnosis.causes.join('\n')+'\n\nRECOMMENDED STEPS:\n'+savedDiagnosis.steps.map((s,i)=>(i+1)+'. '+s).join('\n');
+  document.getElementById('wo-problem').value=existing?existing+'\n\n'+diagText:diagText;
+  toast('Diagnosis saved to work order! 🔧');
+}
+
+function showDiagHome(){
+  const content=document.getElementById('diag-content');
+  content.innerHTML=`
+    <p style="font-size:13px;color:#64748b;margin-bottom:10px">Select equipment to diagnose or view diagrams:</p>
+    <div style="display:grid;gap:8px">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center">
+        <button onclick="startDiag('gas_tank')" class="diag-equip-btn" style="background:linear-gradient(135deg,#1a5fa8,#0d3d6e)">
+          <span style="font-size:24px">🔥</span>
+          <div><div style="font-size:13px;font-weight:700">Gas Tank Water Heater</div></div>
+        </button>
+        <button onclick="showDiagWithDiagram('gas_tank')" style="background:#e8f4fd;border:1px solid #bfdbfe;border-radius:10px;padding:10px 8px;cursor:pointer;font-size:11px;font-weight:600;color:#1a5fa8;font-family:inherit;white-space:nowrap">📐 Diagram</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center">
+        <button onclick="startDiag('electric_tank')" class="diag-equip-btn" style="background:linear-gradient(135deg,#dc2626,#991b1b)">
+          <span style="font-size:24px">⚡</span>
+          <div><div style="font-size:13px;font-weight:700">Electric Tank Water Heater</div></div>
+        </button>
+        <button onclick="showDiagWithDiagram('electric_tank')" style="background:#fee2e2;border:1px solid #fca5a5;border-radius:10px;padding:10px 8px;cursor:pointer;font-size:11px;font-weight:600;color:#dc2626;font-family:inherit;white-space:nowrap">📐 Diagram</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center">
+        <button onclick="startDiag('gas_tankless')" class="diag-equip-btn" style="background:linear-gradient(135deg,#d97706,#92400e)">
+          <span style="font-size:24px">🔥💨</span>
+          <div><div style="font-size:13px;font-weight:700">Gas Tankless Water Heater</div></div>
+        </button>
+        <button onclick="showDiagWithDiagram('gas_tankless')" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 8px;cursor:pointer;font-size:11px;font-weight:600;color:#d97706;font-family:inherit;white-space:nowrap">📐 Diagram</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center">
+        <button onclick="startDiag('electric_tankless')" class="diag-equip-btn" style="background:linear-gradient(135deg,#7c3aed,#4c1d95)">
+          <span style="font-size:24px">⚡💨</span>
+          <div><div style="font-size:13px;font-weight:700">Electric Tankless Water Heater</div></div>
+        </button>
+        <button onclick="showDiagWithDiagram('electric_tankless')" style="background:#faf5ff;border:1px solid #d8b4fe;border-radius:10px;padding:10px 8px;cursor:pointer;font-size:11px;font-weight:600;color:#7c3aed;font-family:inherit;white-space:nowrap">📐 Diagram</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center">
+        <button onclick="startDiag('garbage_disposal')" class="diag-equip-btn" style="background:linear-gradient(135deg,#0d9e6e,#065f46)">
+          <span style="font-size:24px">🗑️</span>
+          <div><div style="font-size:13px;font-weight:700">Garbage Disposal</div></div>
+        </button>
+        <button onclick="showDiagWithDiagram('garbage_disposal')" style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 8px;cursor:pointer;font-size:11px;font-weight:600;color:#0d9e6e;font-family:inherit;white-space:nowrap">📐 Diagram</button>
+      </div>
+    </div>
+    <button onclick="showCodeRef()" style="width:100%;margin-top:12px;background:linear-gradient(135deg,#1e3a5f,#1a5fa8);color:white;border:none;border-radius:12px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
+      📋 Texas Plumbing Code Reference
+    </button>`;
+}
+
+
+// === DIAGRAMS & CODE REFERENCE ===
+// ============================================================
+// DIAGRAMS & CODE REFERENCE MODULE
+// ============================================================
+
+// ---- Component Diagrams (SVG) ----
+const DIAGRAMS = {
+
+gas_tank: `<svg viewBox="0 0 340 520" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:340px;display:block;margin:0 auto">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#1a5fa8"/>
+    </marker>
+  </defs>
+  <!-- Tank body -->
+  <rect x="90" y="80" width="160" height="300" rx="20" fill="#e8f4fd" stroke="#1a5fa8" stroke-width="2.5"/>
+  <!-- Top dome -->
+  <ellipse cx="170" cy="80" rx="80" ry="18" fill="#bfdbfe" stroke="#1a5fa8" stroke-width="2"/>
+  <!-- Bottom dome -->
+  <ellipse cx="170" cy="380" rx="80" ry="18" fill="#bfdbfe" stroke="#1a5fa8" stroke-width="2"/>
+  <!-- Flue pipe (center) -->
+  <rect x="158" y="10" width="24" height="90" fill="#94a3b8" stroke="#64748b" stroke-width="1.5"/>
+  <text x="230" y="55" font-size="11" fill="#475569" font-family="sans-serif">Flue/Vent</text>
+  <text x="230" y="68" font-size="11" fill="#475569" font-family="sans-serif">Pipe</text>
+  <line x1="220" y1="55" x2="185" y2="50" stroke="#1a5fa8" stroke-width="1" marker-end="url(#arr)"/>
+  <!-- Cold water inlet (top right) -->
+  <rect x="250" y="95" width="50" height="12" fill="#93c5fd" stroke="#1a5fa8" stroke-width="1.5"/>
+  <text x="255" y="85" font-size="10" fill="#1a5fa8" font-weight="bold" font-family="sans-serif">Cold In</text>
+  <line x1="270" y1="90" x2="270" y2="102" stroke="#1a5fa8" stroke-width="1" marker-end="url(#arr)"/>
+  <!-- Hot water outlet (top left) -->
+  <rect x="40" y="95" width="50" height="12" fill="#fca5a5" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="18" y="85" font-size="10" fill="#dc2626" font-weight="bold" font-family="sans-serif">Hot Out</text>
+  <line x1="65" y1="90" x2="65" y2="102" stroke="#dc2626" stroke-width="1" marker-end="url(#arr)"/>
+  <!-- Anode rod -->
+  <rect x="155" y="95" width="30" height="180" rx="4" fill="#fbbf24" stroke="#d97706" stroke-width="1.5" opacity=".8"/>
+  <text x="30" y="185" font-size="10" fill="#d97706" font-weight="bold" font-family="sans-serif">Anode</text>
+  <text x="38" y="197" font-size="10" fill="#d97706" font-family="sans-serif">Rod</text>
+  <line x1="82" y1="190" x2="152" y2="185" stroke="#d97706" stroke-width="1" marker-end="url(#arr)"/>
+  <!-- Dip tube -->
+  <rect x="245" y="105" width="8" height="160" rx="2" fill="#475569" stroke="#334155" stroke-width="1"/>
+  <text x="258" y="200" font-size="10" fill="#475569" font-family="sans-serif">Dip</text>
+  <text x="255" y="212" font-size="10" fill="#475569" font-family="sans-serif">Tube</text>
+  <!-- T&P valve -->
+  <rect x="250" y="185" width="45" height="22" rx="4" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="252" y="175" font-size="10" fill="#dc2626" font-weight="bold" font-family="sans-serif">T&amp;P Valve</text>
+  <line x1="270" y1="178" x2="270" y2="184" stroke="#dc2626" stroke-width="1" marker-end="url(#arr)"/>
+  <!-- T&P discharge pipe -->
+  <rect x="290" y="185" width="8" height="100" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <text x="302" y="248" font-size="9" fill="#64748b" font-family="sans-serif">Discharge</text>
+  <text x="305" y="260" font-size="9" fill="#64748b" font-family="sans-serif">Pipe</text>
+  <!-- Gas valve / control -->
+  <rect x="35" y="285" width="65" height="40" rx="6" fill="#dbeafe" stroke="#1a5fa8" stroke-width="2"/>
+  <text x="38" y="302" font-size="10" fill="#1a5fa8" font-weight="bold" font-family="sans-serif">Gas Valve/</text>
+  <text x="42" y="316" font-size="10" fill="#1a5fa8" font-family="sans-serif">Thermostat</text>
+  <line x1="100" y1="305" x2="90" y2="305" stroke="#1a5fa8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <!-- Thermocouple -->
+  <line x1="90" y1="340" x2="145" y2="360" stroke="#d97706" stroke-width="2"/>
+  <circle cx="145" cy="362" r="5" fill="#d97706"/>
+  <text x="30" y="345" font-size="10" fill="#d97706" font-weight="bold" font-family="sans-serif">Thermo-</text>
+  <text x="28" y="357" font-size="10" fill="#d97706" font-family="sans-serif">couple</text>
+  <!-- Pilot light -->
+  <circle cx="155" cy="368" r="7" fill="#fbbf24" stroke="#d97706" stroke-width="1.5"/>
+  <text x="162" y="390" font-size="10" fill="#d97706" font-family="sans-serif">Pilot</text>
+  <!-- Main burner -->
+  <ellipse cx="170" cy="375" rx="50" ry="8" fill="#fed7aa" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="193" y="395" font-size="10" fill="#ea580c" font-weight="bold" font-family="sans-serif">Burner</text>
+  <!-- Drain valve -->
+  <rect x="90" y="365" width="35" height="18" rx="4" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="73" y="410" font-size="10" fill="#64748b" font-family="sans-serif">Drain Valve</text>
+  <line x1="100" y1="407" x2="100" y2="385" stroke="#64748b" stroke-width="1" marker-end="url(#arr)"/>
+  <!-- Stand -->
+  <rect x="90" y="398" width="160" height="12" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <rect x="100" y="410" width="20" height="30" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <rect x="220" y="410" width="20" height="30" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <text x="125" y="448" font-size="10" fill="#64748b" font-family="sans-serif">18" Stand (garage)</text>
+  <!-- Title -->
+  <text x="170" y="475" font-size="13" font-weight="bold" fill="#1a5fa8" text-anchor="middle" font-family="sans-serif">Gas Tank Water Heater</text>
+  <text x="170" y="492" font-size="10" fill="#64748b" text-anchor="middle" font-family="sans-serif">Component Diagram</text>
+</svg>`,
+
+electric_tank: `<svg viewBox="0 0 340 500" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:340px;display:block;margin:0 auto">
+  <defs>
+    <marker id="arr2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#1a5fa8"/>
+    </marker>
+  </defs>
+  <!-- Tank -->
+  <rect x="90" y="60" width="160" height="300" rx="20" fill="#fef3c7" stroke="#d97706" stroke-width="2.5"/>
+  <ellipse cx="170" cy="60" rx="80" ry="18" fill="#fde68a" stroke="#d97706" stroke-width="2"/>
+  <ellipse cx="170" cy="360" rx="80" ry="18" fill="#fde68a" stroke="#d97706" stroke-width="2"/>
+  <!-- Cold water inlet -->
+  <rect x="250" y="75" width="50" height="12" fill="#93c5fd" stroke="#1a5fa8" stroke-width="1.5"/>
+  <text x="252" y="67" font-size="10" fill="#1a5fa8" font-weight="bold" font-family="sans-serif">Cold In</text>
+  <!-- Hot water outlet -->
+  <rect x="40" y="75" width="50" height="12" fill="#fca5a5" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="20" y="67" font-size="10" fill="#dc2626" font-weight="bold" font-family="sans-serif">Hot Out</text>
+  <!-- Anode rod -->
+  <rect x="200" y="75" width="18" height="160" rx="4" fill="#fbbf24" stroke="#d97706" stroke-width="1.5" opacity=".8"/>
+  <text x="222" y="155" font-size="10" fill="#d97706" font-family="sans-serif">Anode Rod</text>
+  <!-- T&P valve -->
+  <rect x="250" y="150" width="45" height="22" rx="4" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="252" y="142" font-size="10" fill="#dc2626" font-weight="bold" font-family="sans-serif">T&amp;P Valve</text>
+  <!-- Upper access panel -->
+  <rect x="90" y="110" width="40" height="30" rx="3" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <text x="22" y="122" font-size="10" fill="#475569" font-family="sans-serif">Upper</text>
+  <text x="18" y="134" font-size="10" fill="#475569" font-family="sans-serif">Access</text>
+  <line x1="76" y1="127" x2="90" y2="127" stroke="#475569" stroke-width="1" marker-end="url(#arr2)"/>
+  <!-- Upper thermostat -->
+  <rect x="95" y="115" width="30" height="18" rx="2" fill="#bfdbfe" stroke="#1a5fa8" stroke-width="1"/>
+  <text x="52" y="145" font-size="9" fill="#1a5fa8" font-family="sans-serif">Upper Therm.</text>
+  <!-- Upper element -->
+  <line x1="130" y1="165" x2="210" y2="165" stroke="#dc2626" stroke-width="3"/>
+  <line x1="150" y1="165" x2="150" y2="185" stroke="#dc2626" stroke-width="3"/>
+  <line x1="190" y1="165" x2="190" y2="185" stroke="#dc2626" stroke-width="3"/>
+  <text x="15" y="168" font-size="10" fill="#dc2626" font-weight="bold" font-family="sans-serif">Upper</text>
+  <text x="10" y="180" font-size="10" fill="#dc2626" font-family="sans-serif">Element</text>
+  <line x1="76" y1="173" x2="128" y2="168" stroke="#dc2626" stroke-width="1" marker-end="url(#arr2)"/>
+  <!-- Lower access panel -->
+  <rect x="90" y="250" width="40" height="30" rx="3" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <text x="22" y="262" font-size="10" fill="#475569" font-family="sans-serif">Lower</text>
+  <text x="18" y="274" font-size="10" fill="#475569" font-family="sans-serif">Access</text>
+  <line x1="76" y1="267" x2="90" y2="267" stroke="#475569" stroke-width="1" marker-end="url(#arr2)"/>
+  <!-- Lower thermostat -->
+  <rect x="95" y="255" width="30" height="18" rx="2" fill="#bfdbfe" stroke="#1a5fa8" stroke-width="1"/>
+  <text x="52" y="285" font-size="9" fill="#1a5fa8" font-family="sans-serif">Lower Therm.</text>
+  <!-- Lower element -->
+  <line x1="130" y1="305" x2="210" y2="305" stroke="#dc2626" stroke-width="3"/>
+  <line x1="150" y1="305" x2="150" y2="325" stroke="#dc2626" stroke-width="3"/>
+  <line x1="190" y1="305" x2="190" y2="325" stroke="#dc2626" stroke-width="3"/>
+  <text x="15" y="308" font-size="10" fill="#dc2626" font-weight="bold" font-family="sans-serif">Lower</text>
+  <text x="10" y="320" font-size="10" fill="#dc2626" font-family="sans-serif">Element</text>
+  <line x1="76" y1="313" x2="128" y2="308" stroke="#dc2626" stroke-width="1" marker-end="url(#arr2)"/>
+  <!-- High limit reset -->
+  <circle cx="115" cy="112" r="7" fill="#dc2626" stroke="#991b1b" stroke-width="1.5"/>
+  <text x="128" y="105" font-size="9" fill="#dc2626" font-weight="bold" font-family="sans-serif">Reset Button</text>
+  <!-- Drain valve -->
+  <rect x="115" y="352" width="35" height="16" rx="4" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="102" y="387" font-size="10" fill="#64748b" font-family="sans-serif">Drain Valve</text>
+  <!-- Title -->
+  <text x="170" y="430" font-size="13" font-weight="bold" fill="#d97706" text-anchor="middle" font-family="sans-serif">Electric Tank Water Heater</text>
+  <text x="170" y="447" font-size="10" fill="#64748b" text-anchor="middle" font-family="sans-serif">Component Diagram</text>
+</svg>`,
+
+garbage_disposal: `<svg viewBox="0 0 340 460" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:340px;display:block;margin:0 auto">
+  <defs>
+    <marker id="arr3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#0d9e6e"/>
+    </marker>
+  </defs>
+  <!-- Sink drain connection -->
+  <rect x="130" y="20" width="80" height="30" rx="8" fill="#94a3b8" stroke="#64748b" stroke-width="2"/>
+  <text x="170" y="40" font-size="11" fill="white" text-anchor="middle" font-weight="bold" font-family="sans-serif">Sink Drain</text>
+  <!-- Mounting assembly -->
+  <rect x="110" y="50" width="120" height="25" rx="5" fill="#64748b" stroke="#475569" stroke-width="2"/>
+  <text x="170" y="67" font-size="10" fill="white" text-anchor="middle" font-family="sans-serif">Mounting Assembly</text>
+  <!-- Splash guard -->
+  <rect x="120" y="75" width="100" height="18" rx="4" fill="#94a3b8" stroke="#64748b" stroke-width="1.5"/>
+  <text x="230" y="88" font-size="10" fill="#475569" font-family="sans-serif">← Splash Guard</text>
+  <!-- Upper housing -->
+  <path d="M100,93 L240,93 L255,150 L85,150 Z" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+  <!-- Grinding ring -->
+  <ellipse cx="170" cy="165" rx="75" ry="22" fill="#475569" stroke="#334155" stroke-width="2.5"/>
+  <text x="170" y="170" font-size="10" fill="white" text-anchor="middle" font-weight="bold" font-family="sans-serif">Grinding Ring</text>
+  <!-- Impeller/turntable -->
+  <ellipse cx="170" cy="165" rx="50" ry="14" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
+  <text x="170" y="169" font-size="9" fill="white" text-anchor="middle" font-family="sans-serif">Impeller Plate</text>
+  <!-- Motor housing -->
+  <rect x="105" y="185" width="130" height="120" rx="10" fill="#dbeafe" stroke="#1a5fa8" stroke-width="2.5"/>
+  <text x="170" y="242" font-size="12" fill="#1a5fa8" text-anchor="middle" font-weight="bold" font-family="sans-serif">Motor</text>
+  <text x="170" y="258" font-size="10" fill="#1a5fa8" text-anchor="middle" font-family="sans-serif">1/3 - 3/4 HP</text>
+  <!-- Dishwasher inlet -->
+  <rect x="240" y="200" width="50" height="14" rx="4" fill="#a7f3d0" stroke="#0d9e6e" stroke-width="1.5"/>
+  <text x="245" y="192" font-size="9" fill="#0d9e6e" font-weight="bold" font-family="sans-serif">DW Inlet</text>
+  <line x1="258" y1="195" x2="258" y2="200" stroke="#0d9e6e" stroke-width="1" marker-end="url(#arr3)"/>
+  <!-- Discharge outlet -->
+  <rect x="180" y="300" width="60" height="14" rx="4" fill="#fed7aa" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="248" y="312" font-size="9" fill="#ea580c" font-weight="bold" font-family="sans-serif">← Discharge</text>
+  <!-- Power cord -->
+  <line x1="130" y1="305" x2="80" y2="340" stroke="#1a1a1a" stroke-width="3"/>
+  <rect x="60" y="338" width="30" height="18" rx="3" fill="#1a1a1a"/>
+  <text x="20" y="352" font-size="10" fill="#475569" font-family="sans-serif">Power Cord</text>
+  <!-- Reset button -->
+  <circle cx="170" cy="318" r="10" fill="#dc2626" stroke="#991b1b" stroke-width="2"/>
+  <text x="170" y="322" font-size="8" fill="white" text-anchor="middle" font-weight="bold" font-family="sans-serif">RST</text>
+  <text x="185" y="335" font-size="10" fill="#dc2626" font-weight="bold" font-family="sans-serif">Reset Button</text>
+  <!-- Hex socket -->
+  <polygon points="170,338 178,342 178,352 170,356 162,352 162,342" fill="#475569" stroke="#334155" stroke-width="1.5"/>
+  <text x="170" y="373" font-size="9" fill="#475569" text-anchor="middle" font-family="sans-serif">1/4" Hex Socket</text>
+  <!-- Bottom label -->
+  <text x="170" y="408" font-size="13" font-weight="bold" fill="#0d9e6e" text-anchor="middle" font-family="sans-serif">Garbage Disposal</text>
+  <text x="170" y="425" font-size="10" fill="#64748b" text-anchor="middle" font-family="sans-serif">Component Diagram</text>
+  <!-- Mounting bolts arrows -->
+  <text x="40" y="130" font-size="9" fill="#475569" font-family="sans-serif">Mounting</text>
+  <text x="43" y="142" font-size="9" fill="#475569" font-family="sans-serif">Bolts (3)</text>
+  <line x1="82" y1="135" x2="100" y2="128" stroke="#475569" stroke-width="1" marker-end="url(#arr3)"/>
+</svg>`
+};
+
+// ---- Texas Plumbing Code Reference ----
+const TX_CODES = [
+  {
+    category:'Water Heater Installation',
+    icon:'🔥',
+    color:'#1a5fa8',
+    items:[
+      {title:'Permits Required',detail:'A plumbing permit is required for water heater replacement in Texas. TSBPE licensed plumber must perform or supervise work. Permit required by local jurisdiction — Orange County/City of Orange requires permit for replacement.'},
+      {title:'Garage Installations — 18" Stand',detail:'Water heaters in garages must be elevated 18" above floor to keep pilot/ignition source above potential gas vapor accumulation. Stand must support weight of full tank. Metal stands preferred. This applies to gas AND electric units in garages.'},
+      {title:'Seismic Strapping',detail:'Texas does not require seismic strapping statewide, but some local jurisdictions may require it. Good practice to strap units over 50 gallons. Use two metal straps — one in upper 1/3, one in lower 1/3 of tank.'},
+      {title:'Clearances',detail:'Gas water heaters: 18" clearance from combustible materials on sides, 6" from back wall. Front access must allow for servicing. Closet installations require combustion air — min 2 openings (top and bottom) sized per BTU input.'},
+      {title:'T&P Valve Requirements',detail:'Every water heater must have a properly sized T&P relief valve. Discharge pipe: same size as valve outlet (usually 3/4"), full-size to within 6" of floor or drain. Cannot terminate in wall, ceiling, or floor. Must discharge in a safe location. No shutoff valve on discharge pipe.'},
+      {title:'Expansion Tank — Closed Systems',detail:'Texas requires an expansion tank on all closed water supply systems (backflow preventer or check valve installed). Most modern meters in Texas have check valves — expansion tank is required. Size tank to match water heater capacity.'},
+      {title:'Water Heater Age & Replacement',detail:'Most water heaters last 8-12 years. In Texas, many insurance companies and warranty companies require replacement of units over 10 years. Always note serial number — manufacture date is encoded. Rheem, AO Smith, Bradford White all have different date codes.'}
+    ]
+  },
+  {
+    category:'Vent Pipe Requirements',
+    icon:'💨',
+    color:'#7c3aed',
+    items:[
+      {title:'Gas Vent Pipe Sizing',detail:'Category I appliances (natural draft): vent must be same size or larger than appliance collar. Never reduce vent size. Minimum 3" for most residential water heaters. Check appliance rating plate for required vent size.'},
+      {title:'Vent Pipe Materials',detail:'Type B double-wall vent pipe required for gas water heaters. Single-wall galvanized may be used in same room as appliance only. Direct vent (sealed combustion) uses manufacturer-specified vent kit only. Never use PVC for gas water heater venting (unless approved direct vent system).'},
+      {title:'Vent Rise and Pitch',detail:'Horizontal vent runs: minimum 1/4" rise per foot toward the termination (chimney or exterior). Maximum horizontal run: 75% of total vertical height. Avoid long horizontal runs — reduces draft. Vertical rise should start as close to appliance as possible.'},
+      {title:'Vent Clearances',detail:'Type B vent: 1" clearance from combustibles. Single-wall: 6" clearance from combustibles. Vent must penetrate ceiling/roof with approved fire stop/thimble. Maintain clearances throughout entire run including attic.'},
+      {title:'Vent Termination',detail:'Must terminate minimum 2 feet above any part of building within 10 feet horizontally. Minimum 1 foot above roof penetration. Keep away from windows, doors, gas meters. Use approved rain cap. Screen termination to prevent bird nests (common in Southeast Texas).'},
+      {title:'Combustion Air',detail:'Natural draft appliances require adequate combustion air. Confined spaces: provide two openings — top and bottom. Size: 1 sq inch per 1,000 BTU input. Unconfined space (large room): typically adequate. New tight construction may need dedicated combustion air duct.'},
+      {title:'Power Vent & Direct Vent',detail:'Power vent: uses blower to exhaust through PVC pipe — can run horizontally long distances. Great for closet or interior installations. Direct vent: sealed combustion, draws air from outside — excellent for tight spaces. Both require manufacturer-specific components.'}
+    ]
+  },
+  {
+    category:'Gas Line Requirements',
+    icon:'⛽',
+    color:'#ea580c',
+    items:[
+      {title:'Gas Line Sizing',detail:'Size gas line by length and BTU demand. Water heaters typically 36,000-199,000 BTU/hr. Use gas pipe sizing tables (IFGC Table 402.4). Undersized gas line is common cause of tankless unit problems. When adding tankless, verify existing line capacity — may need upgrade.'},
+      {title:'Gas Pipe Materials',detail:'Texas allows: black iron pipe, CSST (corrugated stainless steel tubing), copper (LP only — not natural gas), and approved flexible connectors. CSST requires bonding per local code. Use Teflon tape rated for gas (yellow) or approved pipe dope on threaded connections.'},
+      {title:'Flexible Connectors',detail:'Appliance connectors must be listed and labeled. Maximum 6 feet long. Cannot pass through walls, floors, or ceilings. Replace if kinked, corroded, or damaged. Do not use corrugated stainless flexible connectors as permanent piping. Replace connector when replacing appliance.'},
+      {title:'Shutoff Valve',detail:'Accessible shutoff valve required within 6 feet of appliance. Must be easily accessible. Ball valves preferred over gate valves. Label all shutoff valves. Locate before testing — critical for emergency shutoff.'},
+      {title:'Pressure Testing',detail:'New gas installations must be pressure tested before use. Low pressure test: 1.5 times working pressure (min 3 PSI) for 15 minutes. Use soap solution on all fittings. No drop in pressure = no leaks. Gas company tests line pressure — typically 3.5" WC (0.125 PSI) for natural gas at appliance.'},
+      {title:'CSST Bonding',detail:'Texas and IRC require CSST to be bonded to grounding system. Bond at each segment — use listed bonding clamp. Failure to bond CSST can cause arc damage from lightning. This is a commonly missed item on inspections.'}
+    ]
+  },
+  {
+    category:'Water Supply & Drain Codes',
+    icon:'💧',
+    color:'#0d9e6e',
+    items:[
+      {title:'Water Pressure',detail:'Texas code: minimum 40 PSI, maximum 80 PSI at point of use. Pressure over 80 PSI requires pressure reducing valve (PRV). PRV should be set to 50-60 PSI. High pressure damages water heaters, fixtures, and causes T&P valve to open. Check pressure before diagnosing water heater problems.'},
+      {title:'Backflow Prevention',detail:'Most Texas meters now include check valve — creates closed system. Closed system requires expansion tank. Atmospheric vacuum breakers required on irrigation systems and hose bibbs. Reduced pressure zone (RPZ) backflow preventers required for commercial and chemical applications.'},
+      {title:'Water Heater Supply Lines',detail:'Use flexible stainless braided connectors or copper supply lines. Minimum 3/4" supply and hot water lines for tank water heaters. Tankless units may require 3/4" or 1" depending on flow rate. Dielectric unions required where dissimilar metals connect (copper to galvanized).'},
+      {title:'Drain Pan Requirements',detail:'Drain pan required when water heater is located where leakage could cause damage (attic, upper floor, finished space). Pan must be minimum 1.5" deep, extend 3" beyond unit. Drain line: 3/4" minimum, terminate to safe location. PVC drain pan lines acceptable.'},
+      {title:'Earthquake Straps / Anchoring',detail:'Not required statewide in Texas but good practice. Some insurance policies and warranty companies require strapping. Use two metal straps — IAPMO listed seismic straps. Upper strap in top 1/3, lower strap in bottom 1/3. Anchor to studs or blocking.'},
+    ]
+  },
+  {
+    category:'TSBPE & Licensing',
+    icon:'📋',
+    color:'#64748b',
+    items:[
+      {title:'License Requirements',detail:'All plumbing work in Texas must be performed by or under direct supervision of a TSBPE licensed Master Plumber or Journeyman Plumber. Homeowners may do their own plumbing in their primary residence (not rental property). Always verify license before hiring.'},
+      {title:'TSBPE Contact',detail:'Texas State Board of Plumbing Examiners\n7915 Cameron Road, Austin, Texas 78754\nPhone: (800) 845-6584\nWebsite: tsbpe.texas.gov\nVerify license: tsbpe.texas.gov/licensee-search'},
+      {title:'Permit Process in Orange',detail:'Contact City of Orange Building Department or Orange County for permits. Rough-in inspection and final inspection typically required. Water heater replacement: usually requires permit with final inspection. Always pull permit — protects you and the homeowner.'},
+      {title:'Warranty Company Requirements',detail:'Home warranty companies (American Home Shield, Choice Home Warranty, etc.) typically require: licensed plumber, permits where required, photos of before/after, proper disposal of old unit. Document everything — serial numbers, photos, permit numbers.'},
+      {title:'Common Code Violations',detail:'1. No T&P discharge pipe or improper termination\n2. Missing expansion tank on closed system\n3. No 18" stand in garage\n4. Improper vent material or pitch\n5. No shutoff valve within 6 feet\n6. CSST not bonded\n7. No permit pulled\n8. Wrong size vent for appliance BTU'}
+    ]
+  }
+];
+
+// ---- Render Functions ----
+// showDiagWithDiagram replaced by enhanced version below
+
+function showCodeRef(){
+  const content=document.getElementById('diag-content');
+  let html=`
+    <div style="background:#1a5fa8;border-radius:10px;padding:12px 14px;margin-bottom:14px;color:white">
+      <div style="font-size:15px;font-weight:700">📋 Texas Plumbing Code Reference</div>
+      <div style="font-size:11px;opacity:.8;margin-top:2px">IRC as adopted by Texas + TSBPE Requirements</div>
+    </div>`;
+
+  TX_CODES.forEach(section=>{
+    html+=`
+      <div style="background:white;border-radius:12px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)">
+        <div style="background:${section.color};padding:10px 14px;display:flex;align-items:center;gap:8px;cursor:pointer" onclick="toggleCodeSection(this)">
+          <span style="font-size:18px">${section.icon}</span>
+          <div style="font-size:13px;font-weight:700;color:white;flex:1">${section.category}</div>
+          <span style="color:white;font-size:16px;transition:.2s">▼</span>
+        </div>
+        <div class="code-section-content" style="padding:10px">
+          ${section.items.map(item=>`
+            <div style="border-bottom:1px solid #f1f5f9;padding:10px 0">
+              <div style="font-size:13px;font-weight:700;color:#1a1a1a;margin-bottom:4px">${item.title}</div>
+              <div style="font-size:12px;color:#475569;line-height:1.6;white-space:pre-line">${item.detail}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  });
+
+  html+=`<button onclick="showDiagHome()" style="width:100%;background:#f1f5f9;border:none;border-radius:10px;padding:12px;font-size:13px;color:#64748b;cursor:pointer;font-family:inherit;margin-bottom:12px">← Back to Diagnostic Tool</button>`;
+
+  content.innerHTML=html;
+}
+
+function toggleCodeSection(header){
+  const content=header.nextElementSibling;
+  const arrow=header.querySelector('span:last-child');
+  const isOpen=content.style.display!=='none';
+  content.style.display=isOpen?'none':'block';
+  arrow.style.transform=isOpen?'rotate(-90deg)':'rotate(0deg)';
+}
+
+
+// === ENHANCED DIAGRAMS V2 ===
+// ============================================================
+// ENHANCED DIAGRAMS WITH GOOGLE IMAGE SEARCH BUTTONS
+// ============================================================
+
+const COMPONENT_SEARCHES = {
+  gas_tank:[
+    {name:'Flue/Vent Pipe',query:'water heater flue vent pipe type B'},
+    {name:'Cold Water Inlet',query:'water heater cold water inlet fitting'},
+    {name:'Hot Water Outlet',query:'water heater hot water outlet fitting'},
+    {name:'Anode Rod',query:'water heater anode rod magnesium'},
+    {name:'Dip Tube',query:'water heater dip tube'},
+    {name:'T&P Relief Valve',query:'water heater temperature pressure relief valve'},
+    {name:'T&P Discharge Pipe',query:'water heater T&P discharge pipe installation'},
+    {name:'Gas Valve / Thermostat',query:'water heater gas valve thermostat'},
+    {name:'Thermocouple',query:'water heater thermocouple replacement'},
+    {name:'Pilot Assembly',query:'water heater pilot light assembly'},
+    {name:'Main Burner',query:'water heater gas burner assembly'},
+    {name:'Drain Valve',query:'water heater drain valve brass'},
+    {name:'Expansion Tank',query:'water heater expansion tank installation'},
+    {name:'18" Garage Stand',query:'water heater garage stand 18 inch code'},
+    {name:'Flexible Connectors',query:'water heater flexible connectors 3/4 inch'},
+  ],
+  electric_tank:[
+    {name:'Upper Heating Element',query:'water heater upper heating element replacement'},
+    {name:'Lower Heating Element',query:'water heater lower heating element replacement'},
+    {name:'Upper Thermostat',query:'water heater upper thermostat replacement'},
+    {name:'Lower Thermostat',query:'water heater lower thermostat replacement'},
+    {name:'High Limit / Reset Button',query:'water heater high limit reset button'},
+    {name:'T&P Relief Valve',query:'water heater temperature pressure relief valve'},
+    {name:'Anode Rod',query:'water heater anode rod replacement'},
+    {name:'Drain Valve',query:'water heater drain valve replacement'},
+    {name:'Element Gasket',query:'water heater element gasket o-ring'},
+    {name:'Access Panel',query:'water heater access panel cover'},
+  ],
+  gas_tankless:[
+    {name:'Heat Exchanger',query:'tankless water heater heat exchanger'},
+    {name:'Flow Sensor',query:'tankless water heater flow sensor'},
+    {name:'Igniter',query:'tankless water heater igniter electrode'},
+    {name:'Gas Valve',query:'tankless water heater gas valve'},
+    {name:'Venting System',query:'tankless water heater venting PVC'},
+    {name:'Inlet Filter Screen',query:'tankless water heater inlet filter screen'},
+    {name:'Pressure Relief Valve',query:'tankless water heater pressure relief valve'},
+    {name:'Control Board',query:'tankless water heater control board'},
+    {name:'Descaling / Flushing',query:'tankless water heater descaling flush kit'},
+    {name:'Condensate Drain',query:'tankless water heater condensate drain'},
+  ],
+  electric_tankless:[
+    {name:'Heating Elements',query:'electric tankless water heater heating elements'},
+    {name:'Control Board',query:'electric tankless water heater control board'},
+    {name:'Reset Button',query:'electric tankless water heater reset button'},
+    {name:'Inlet Filter',query:'electric tankless water heater filter'},
+    {name:'Wiring Connections',query:'electric tankless water heater wiring 240v'},
+  ],
+  garbage_disposal:[
+    {name:'Sink Flange',query:'garbage disposal sink flange mounting'},
+    {name:'Mounting Assembly',query:'garbage disposal mounting assembly'},
+    {name:'Splash Guard',query:'garbage disposal splash guard replacement'},
+    {name:'Grinding Ring',query:'garbage disposal grinding ring'},
+    {name:'Impeller / Turntable',query:'garbage disposal impeller turntable plate'},
+    {name:'Motor',query:'garbage disposal motor replacement'},
+    {name:'Reset Button',query:'garbage disposal reset button overload'},
+    {name:'Hex Socket Unjamming',query:'garbage disposal jam hex wrench unjam'},
+    {name:'Discharge Pipe',query:'garbage disposal discharge pipe installation'},
+    {name:'Dishwasher Inlet',query:'garbage disposal dishwasher inlet knockout'},
+  ]
+};
+
+const ENHANCED_DIAGRAMS = {
+
+gas_tank:`<svg viewBox="0 0 380 560" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:380px;display:block;margin:0 auto;font-family:system-ui,sans-serif">
+  <defs>
+    <linearGradient id="tankGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#93c5fd;stop-opacity:1"/>
+      <stop offset="40%" style="stop-color:#dbeafe;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#93c5fd;stop-opacity:1"/>
+    </linearGradient>
+    <linearGradient id="flueGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#94a3b8"/>
+      <stop offset="50%" style="stop-color:#cbd5e1"/>
+      <stop offset="100%" style="stop-color:#94a3b8"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Flue pipe -->
+  <rect x="162" y="8" width="26" height="85" fill="url(#flueGrad)" stroke="#64748b" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="158" y="8" width="34" height="8" rx="2" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <text x="196" y="30" font-size="10" fill="#475569">Flue/Vent</text>
+  <text x="198" y="43" font-size="10" fill="#475569">Pipe</text>
+  <line x1="194" y1="36" x2="190" y2="38" stroke="#64748b" stroke-width="1"/>
+
+  <!-- Cold water inlet pipe -->
+  <rect x="265" y="82" width="60" height="14" rx="3" fill="#93c5fd" stroke="#2563eb" stroke-width="1.5"/>
+  <rect x="258" y="78" width="12" height="22" rx="3" fill="#3b82f6" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="268" y="72" font-size="10" fill="#1d4ed8" font-weight="bold">Cold In</text>
+
+  <!-- Hot water outlet pipe -->
+  <rect x="55" y="82" width="60" height="14" rx="3" fill="#fca5a5" stroke="#dc2626" stroke-width="1.5"/>
+  <rect x="115" y="78" width="12" height="22" rx="3" fill="#ef4444" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="45" y="72" font-size="10" fill="#dc2626" font-weight="bold">Hot Out</text>
+
+  <!-- Main tank body with gradient -->
+  <rect x="100" y="85" width="150" height="310" rx="22" fill="url(#tankGrad)" stroke="#2563eb" stroke-width="2.5" filter="url(#shadow)"/>
+  <!-- Tank top dome -->
+  <ellipse cx="175" cy="85" rx="75" ry="20" fill="#bfdbfe" stroke="#2563eb" stroke-width="2"/>
+  <!-- Tank bottom dome -->
+  <ellipse cx="175" cy="395" rx="75" ry="20" fill="#bfdbfe" stroke="#2563eb" stroke-width="2"/>
+  <!-- Tank shine effect -->
+  <ellipse cx="135" cy="200" rx="12" ry="60" fill="white" opacity="0.3"/>
+
+  <!-- Insulation indicator -->
+  <rect x="104" y="120" width="6" height="240" rx="3" fill="#fef3c7" stroke="#fbbf24" stroke-width="1" opacity="0.7"/>
+  <rect x="240" y="120" width="6" height="240" rx="3" fill="#fef3c7" stroke="#fbbf24" stroke-width="1" opacity="0.7"/>
+
+  <!-- Anode rod -->
+  <rect x="162" y="100" width="14" height="195" rx="5" fill="#fbbf24" stroke="#d97706" stroke-width="1.5"/>
+  <rect x="160" y="96" width="18" height="10" rx="3" fill="#d97706" stroke="#b45309" stroke-width="1"/>
+  <text x="15" y="195" font-size="10" fill="#b45309" font-weight="bold">Anode</text>
+  <text x="23" y="207" font-size="10" fill="#b45309">Rod</text>
+  <line x1="62" y1="200" x2="160" y2="193" stroke="#d97706" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Dip tube -->
+  <rect x="252" y="100" width="7" height="175" rx="2" fill="#334155" stroke="#1e293b" stroke-width="1"/>
+  <text x="263" y="195" font-size="9" fill="#334155">Dip Tube</text>
+
+  <!-- T&P valve -->
+  <rect x="265" y="168" width="50" height="26" rx="5" fill="#fecaca" stroke="#dc2626" stroke-width="2"/>
+  <rect x="310" y="172" width="30" height="7" rx="2" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <text x="267" y="157" font-size="10" fill="#dc2626" font-weight="bold">T&amp;P Valve</text>
+  <line x1="278" y1="160" x2="278" y2="167" stroke="#dc2626" stroke-width="1"/>
+
+  <!-- T&P discharge pipe -->
+  <rect x="336" y="175" width="8" height="130" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <text x="347" y="245" font-size="9" fill="#64748b">Discharge</text>
+  <text x="350" y="257" font-size="9" fill="#64748b">Pipe →</text>
+  <text x="347" y="269" font-size="9" fill="#64748b">Floor</text>
+
+  <!-- Gas valve / control box -->
+  <rect x="28" y="278" width="78" height="52" rx="8" fill="#dbeafe" stroke="#1a5fa8" stroke-width="2" filter="url(#shadow)"/>
+  <!-- Knob on gas valve -->
+  <circle cx="55" cy="305" r="10" fill="#1a5fa8" stroke="#1e40af" stroke-width="1.5"/>
+  <text x="68" y="296" font-size="9" fill="#1a5fa8" font-weight="bold">Gas Valve</text>
+  <text x="65" y="308" font-size="9" fill="#1a5fa8">Thermostat</text>
+  <line x1="106" y1="304" x2="100" y2="304" stroke="#1a5fa8" stroke-width="1.5"/>
+
+  <!-- Gas supply pipe -->
+  <rect x="8" y="300" width="22" height="10" rx="2" fill="#94a3b8" stroke="#64748b" stroke-width="1.5"/>
+  <text x="2" y="292" font-size="9" fill="#64748b">Gas In</text>
+
+  <!-- Thermocouple -->
+  <line x1="100" y1="348" x2="158" y2="368" stroke="#d97706" stroke-width="2.5"/>
+  <circle cx="158" cy="369" r="5" fill="#d97706" stroke="#b45309" stroke-width="1"/>
+  <text x="22" y="352" font-size="10" fill="#b45309" font-weight="bold">Thermo-</text>
+  <text x="25" y="364" font-size="10" fill="#b45309">couple</text>
+  <line x1="78" y1="358" x2="100" y2="350" stroke="#d97706" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Pilot assembly -->
+  <circle cx="168" cy="376" r="6" fill="#fbbf24" stroke="#d97706" stroke-width="1.5"/>
+  <!-- Flame effect -->
+  <path d="M166,372 Q168,366 170,372 Q172,368 168,364 Q164,368 166,372" fill="#f97316" opacity="0.8"/>
+  <text x="178" y="372" font-size="9" fill="#d97706">Pilot</text>
+
+  <!-- Main burner with flames -->
+  <ellipse cx="175" cy="385" rx="48" ry="9" fill="#fed7aa" stroke="#ea580c" stroke-width="1.5"/>
+  <path d="M140,385 Q145,378 150,385" fill="#fbbf24" opacity="0.7"/>
+  <path d="M160,385 Q165,377 170,385" fill="#fbbf24" opacity="0.7"/>
+  <path d="M175,385 Q180,376 185,385" fill="#fbbf24" opacity="0.7"/>
+  <path d="M192,385 Q197,379 202,385" fill="#fbbf24" opacity="0.7"/>
+  <text x="185" y="400" font-size="10" fill="#ea580c" font-weight="bold">Burner</text>
+
+  <!-- Drain valve -->
+  <rect x="130" y="388" width="34" height="16" rx="5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+  <circle cx="147" cy="396" r="4" fill="#94a3b8"/>
+  <text x="118" y="420" font-size="10" fill="#64748b">Drain Valve</text>
+  <line x1="140" y1="416" x2="140" y2="405" stroke="#64748b" stroke-width="1" stroke-dasharray="2,2"/>
+
+  <!-- Stand legs -->
+  <rect x="100" y="410" width="150" height="10" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1.5"/>
+  <rect x="108" y="420" width="18" height="35" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <rect x="225" y="420" width="18" height="35" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <rect x="100" y="453" width="150" height="5" rx="2" fill="#64748b"/>
+  <text x="145" y="470" font-size="9" fill="#64748b" font-weight="bold">18" Stand (Garage Code)</text>
+
+  <!-- Title -->
+  <text x="175" y="498" font-size="13" font-weight="bold" fill="#1a5fa8" text-anchor="middle">Gas Tank Water Heater</text>
+  <text x="175" y="513" font-size="10" fill="#64748b" text-anchor="middle">KPC Plumbing — Component Diagram</text>
+</svg>`,
+
+electric_tank:`<svg viewBox="0 0 380 540" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:380px;display:block;margin:0 auto;font-family:system-ui,sans-serif">
+  <defs>
+    <linearGradient id="eTankGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#fcd34d;stop-opacity:1"/>
+      <stop offset="40%" style="stop-color:#fef3c7;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#fcd34d;stop-opacity:1"/>
+    </linearGradient>
+    <filter id="shadow2"><feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.15"/></filter>
+  </defs>
+
+  <!-- Cold water inlet -->
+  <rect x="265" y="72" width="55" height="14" rx="3" fill="#93c5fd" stroke="#2563eb" stroke-width="1.5"/>
+  <rect x="258" y="68" width="12" height="22" rx="3" fill="#3b82f6" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="268" y="62" font-size="10" fill="#1d4ed8" font-weight="bold">Cold In</text>
+
+  <!-- Hot water outlet -->
+  <rect x="60" y="72" width="55" height="14" rx="3" fill="#fca5a5" stroke="#dc2626" stroke-width="1.5"/>
+  <rect x="110" y="68" width="12" height="22" rx="3" fill="#ef4444" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="42" y="62" font-size="10" fill="#dc2626" font-weight="bold">Hot Out</text>
+
+  <!-- Main tank -->
+  <rect x="100" y="75" width="155" height="315" rx="22" fill="url(#eTankGrad)" stroke="#d97706" stroke-width="2.5" filter="url(#shadow2)"/>
+  <ellipse cx="177" cy="75" rx="77" ry="20" fill="#fde68a" stroke="#d97706" stroke-width="2"/>
+  <ellipse cx="177" cy="390" rx="77" ry="20" fill="#fde68a" stroke="#d97706" stroke-width="2"/>
+  <ellipse cx="140" cy="210" rx="10" ry="55" fill="white" opacity="0.25"/>
+
+  <!-- Anode rod -->
+  <rect x="205" y="88" width="13" height="175" rx="5" fill="#fbbf24" stroke="#d97706" stroke-width="1.5"/>
+  <text x="222" y="178" font-size="10" fill="#b45309">Anode Rod</text>
+
+  <!-- T&P valve -->
+  <rect x="265" y="148" width="50" height="26" rx="5" fill="#fecaca" stroke="#dc2626" stroke-width="2"/>
+  <text x="267" y="138" font-size="10" fill="#dc2626" font-weight="bold">T&amp;P Valve</text>
+  <rect x="310" y="152" width="28" height="7" rx="2" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+
+  <!-- Upper access panel -->
+  <rect x="100" y="105" width="45" height="38" rx="4" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,2"/>
+  <text x="22" y="118" font-size="10" fill="#475569" font-weight="bold">Upper</text>
+  <text x="20" y="130" font-size="10" fill="#475569">Access</text>
+  <line x1="76" y1="124" x2="100" y2="124" stroke="#475569" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- High limit reset button -->
+  <circle cx="122" cy="110" r="9" fill="#dc2626" stroke="#991b1b" stroke-width="2"/>
+  <text x="113" y="114" font-size="7" fill="white" font-weight="bold">RST</text>
+  <text x="135" y="102" font-size="9" fill="#dc2626" font-weight="bold">Reset/High Limit</text>
+
+  <!-- Upper thermostat -->
+  <rect x="104" y="122" width="36" height="16" rx="3" fill="#bfdbfe" stroke="#1a5fa8" stroke-width="1.5"/>
+  <text x="144" y="133" font-size="9" fill="#1a5fa8">Upper Thermostat</text>
+
+  <!-- Upper element wires -->
+  <line x1="145" y1="163" x2="100" y2="163" stroke="#dc2626" stroke-width="2"/>
+  <line x1="100" y1="163" x2="100" y2="155" stroke="#dc2626" stroke-width="2"/>
+  <!-- Upper heating element -->
+  <line x1="145" y1="168" x2="230" y2="168" stroke="#dc2626" stroke-width="3.5"/>
+  <path d="M155,168 Q162,158 169,168 Q176,158 183,168 Q190,158 197,168 Q204,158 211,168 Q218,158 225,168" fill="none" stroke="#ef4444" stroke-width="2.5"/>
+  <text x="15" y="162" font-size="10" fill="#dc2626" font-weight="bold">Upper</text>
+  <text x="10" y="174" font-size="10" fill="#dc2626">Element</text>
+  <line x1="72" y1="168" x2="142" y2="168" stroke="#dc2626" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Lower access panel -->
+  <rect x="100" y="265" width="45" height="38" rx="4" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,2"/>
+  <text x="22" y="278" font-size="10" fill="#475569" font-weight="bold">Lower</text>
+  <text x="20" y="290" font-size="10" fill="#475569">Access</text>
+  <line x1="76" y1="284" x2="100" y2="284" stroke="#475569" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Lower thermostat -->
+  <rect x="104" y="278" width="36" height="16" rx="3" fill="#bfdbfe" stroke="#1a5fa8" stroke-width="1.5"/>
+  <text x="144" y="289" font-size="9" fill="#1a5fa8">Lower Thermostat</text>
+
+  <!-- Lower heating element -->
+  <line x1="145" y1="320" x2="230" y2="320" stroke="#dc2626" stroke-width="3.5"/>
+  <path d="M155,320 Q162,310 169,320 Q176,310 183,320 Q190,310 197,320 Q204,310 211,320 Q218,310 225,320" fill="none" stroke="#ef4444" stroke-width="2.5"/>
+  <text x="15" y="314" font-size="10" fill="#dc2626" font-weight="bold">Lower</text>
+  <text x="10" y="326" font-size="10" fill="#dc2626">Element</text>
+  <line x1="72" y1="320" x2="142" y2="320" stroke="#dc2626" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Element connections to wall -->
+  <line x1="100" y1="320" x2="100" y2="310" stroke="#dc2626" stroke-width="2"/>
+  <line x1="145" y1="315" x2="100" y2="315" stroke="#dc2626" stroke-width="2"/>
+
+  <!-- Drain valve -->
+  <rect x="125" y="380" width="40" height="18" rx="5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+  <circle cx="145" cy="389" r="5" fill="#94a3b8"/>
+  <text x="115" y="415" font-size="10" fill="#64748b">Drain Valve</text>
+  <line x1="140" y1="412" x2="140" y2="400" stroke="#64748b" stroke-width="1" stroke-dasharray="2,2"/>
+
+  <!-- Stand -->
+  <rect x="100" y="406" width="155" height="10" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1.5"/>
+  <rect x="108" y="416" width="18" height="32" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <rect x="230" y="416" width="18" height="32" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <rect x="100" y="446" width="155" height="5" rx="2" fill="#64748b"/>
+
+  <text x="177" y="480" font-size="13" font-weight="bold" fill="#d97706" text-anchor="middle">Electric Tank Water Heater</text>
+  <text x="177" y="496" font-size="10" fill="#64748b" text-anchor="middle">KPC Plumbing — Component Diagram</text>
+</svg>`,
+
+garbage_disposal:`<svg viewBox="0 0 360 480" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:360px;display:block;margin:0 auto;font-family:system-ui,sans-serif">
+  <defs>
+    <linearGradient id="motorGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#dbeafe"/>
+      <stop offset="100%" style="stop-color:#bfdbfe"/>
+    </linearGradient>
+    <filter id="shadow3"><feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.15"/></filter>
+  </defs>
+
+  <!-- Sink basket / drain connection -->
+  <rect x="120" y="15" width="100" height="32" rx="10" fill="#94a3b8" stroke="#475569" stroke-width="2" filter="url(#shadow3)"/>
+  <rect x="130" y="20" width="80" height="22" rx="7" fill="#cbd5e1" stroke="#64748b" stroke-width="1"/>
+  <text x="180" y="35" font-size="11" fill="#1e293b" text-anchor="middle" font-weight="bold">Sink Drain</text>
+
+  <!-- Mounting flange -->
+  <rect x="108" y="47" width="124" height="20" rx="5" fill="#64748b" stroke="#475569" stroke-width="2"/>
+  <circle cx="130" cy="57" r="5" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <circle cx="180" cy="57" r="5" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <circle cx="230" cy="57" r="5" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+  <text x="255" y="61" font-size="10" fill="#475569">← Mounting Bolts</text>
+  <text x="18" y="61" font-size="10" fill="#475569">Flange →</text>
+
+  <!-- Splash guard -->
+  <path d="M112,67 L228,67 L232,90 L108,90 Z" fill="#94a3b8" stroke="#64748b" stroke-width="1.5"/>
+  <text x="10" y="82" font-size="10" fill="#475569">Splash Guard →</text>
+
+  <!-- Upper housing / grinding section -->
+  <path d="M105,90 L235,90 L250,148 L90,148 Z" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+
+  <!-- Grinding ring (outer) -->
+  <ellipse cx="170" cy="162" rx="80" ry="24" fill="#334155" stroke="#1e293b" stroke-width="2.5" filter="url(#shadow3)"/>
+  <!-- Grinding teeth pattern -->
+  <ellipse cx="170" cy="162" rx="72" ry="18" fill="#475569"/>
+  <!-- Grinding ring teeth -->
+  <rect x="102" y="156" width="8" height="12" rx="1" fill="#1e293b"/>
+  <rect x="116" y="154" width="8" height="14" rx="1" fill="#1e293b"/>
+  <rect x="130" y="153" width="8" height="15" rx="1" fill="#1e293b"/>
+  <rect x="144" y="154" width="8" height="14" rx="1" fill="#1e293b"/>
+  <rect x="158" y="156" width="8" height="12" rx="1" fill="#1e293b"/>
+  <rect x="172" y="156" width="8" height="12" rx="1" fill="#1e293b"/>
+  <rect x="186" y="154" width="8" height="14" rx="1" fill="#1e293b"/>
+  <rect x="200" y="153" width="8" height="15" rx="1" fill="#1e293b"/>
+  <rect x="214" y="154" width="8" height="14" rx="1" fill="#1e293b"/>
+  <rect x="228" y="156" width="8" height="12" rx="1" fill="#1e293b"/>
+  <text x="255" y="168" font-size="10" fill="#334155" font-weight="bold">← Grinding Ring</text>
+
+  <!-- Impeller plate -->
+  <ellipse cx="170" cy="162" rx="50" ry="13" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
+  <!-- Impeller arms -->
+  <rect x="128" y="158" width="28" height="8" rx="2" fill="#475569"/>
+  <rect x="184" y="158" width="28" height="8" rx="2" fill="#475569"/>
+  <text x="255" y="148" font-size="10" fill="#64748b">← Impeller Plate</text>
+
+  <!-- Dishwasher inlet -->
+  <rect x="248" y="200" width="55" height="16" rx="4" fill="#a7f3d0" stroke="#0d9e6e" stroke-width="1.5"/>
+  <text x="252" y="195" font-size="9" fill="#0d9e6e" font-weight="bold">DW Inlet</text>
+  <line x1="260" y1="197" x2="260" y2="202" stroke="#0d9e6e" stroke-width="1"/>
+
+  <!-- Motor housing -->
+  <rect x="100" y="182" width="140" height="135" rx="12" fill="url(#motorGrad)" stroke="#1a5fa8" stroke-width="2.5" filter="url(#shadow3)"/>
+  <!-- Motor windings representation -->
+  <ellipse cx="170" cy="240" rx="45" ry="35" fill="#bfdbfe" stroke="#1a5fa8" stroke-width="1.5"/>
+  <ellipse cx="170" cy="240" rx="30" ry="22" fill="#93c5fd" stroke="#1a5fa8" stroke-width="1"/>
+  <text x="170" y="236" font-size="11" fill="#1a5fa8" text-anchor="middle" font-weight="bold">MOTOR</text>
+  <text x="170" y="250" font-size="10" fill="#1a5fa8" text-anchor="middle">1/3 - 3/4 HP</text>
+  <!-- Motor brand area -->
+  <rect x="110" y="298" width="120" height="12" rx="3" fill="#1a5fa8" opacity="0.2"/>
+  <text x="170" y="308" font-size="9" fill="#1a5fa8" text-anchor="middle">InSinkErator / Moen / Waste King</text>
+
+  <!-- Power cord -->
+  <path d="M125,317 Q115,330 105,345 Q95,355 85,360" fill="none" stroke="#1a1a1a" stroke-width="3.5"/>
+  <rect x="68" y="357" width="32" height="20" rx="4" fill="#1a1a1a"/>
+  <text x="12" y="372" font-size="10" fill="#475569">Power Cord</text>
+
+  <!-- Discharge outlet -->
+  <rect x="175" y="308" width="68" height="16" rx="4" fill="#fed7aa" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="248" y="322" font-size="9" fill="#ea580c" font-weight="bold">← Discharge</text>
+
+  <!-- Reset button -->
+  <circle cx="170" cy="328" r="12" fill="#dc2626" stroke="#991b1b" stroke-width="2"/>
+  <circle cx="170" cy="328" r="7" fill="#b91c1c" stroke="#991b1b" stroke-width="1"/>
+  <text x="170" y="332" font-size="8" fill="white" text-anchor="middle" font-weight="bold">RST</text>
+  <text x="186" y="344" font-size="10" fill="#dc2626" font-weight="bold">Reset Button</text>
+
+  <!-- Hex socket -->
+  <polygon points="170,348 179,353 179,364 170,369 161,364 161,353" fill="#475569" stroke="#334155" stroke-width="2"/>
+  <text x="170" y="386" font-size="9" fill="#475569" text-anchor="middle">¼" Hex Socket (Unjam)</text>
+
+  <text x="180" y="420" font-size="13" font-weight="bold" fill="#0d9e6e" text-anchor="middle">Garbage Disposal</text>
+  <text x="180" y="436" font-size="10" fill="#64748b" text-anchor="middle">KPC Plumbing — Component Diagram</text>
+</svg>`
+};
+
+function showDiagWithDiagram(equipType){
+  const diagHtml=ENHANCED_DIAGRAMS[equipType]||DIAGRAMS[equipType]||'';
+  const searches=COMPONENT_SEARCHES[equipType]||[];
+  const content=document.getElementById('diag-content');
+  const equipLabels={
+    gas_tank:'Gas Tank Water Heater',
+    electric_tank:'Electric Tank Water Heater',
+    gas_tankless:'Gas Tankless Water Heater',
+    electric_tankless:'Electric Tankless Water Heater',
+    garbage_disposal:'Garbage Disposal'
+  };
+  const colors={gas_tank:'#1a5fa8',electric_tank:'#d97706',gas_tankless:'#ea580c',electric_tankless:'#7c3aed',garbage_disposal:'#0d9e6e'};
+  const color=colors[equipType]||'#1a5fa8';
+
+  content.innerHTML=`
+    <div style="background:${color};border-radius:10px;padding:12px 14px;margin-bottom:12px;color:white;text-align:center">
+      <div style="font-size:14px;font-weight:700">${equipLabels[equipType]||equipType}</div>
+      <div style="font-size:11px;opacity:.8;margin-top:2px">Tap any component below to see photos</div>
+    </div>
+
+    ${diagHtml}
+
+    <div style="background:white;border-radius:12px;padding:12px;margin-top:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)">
+      <div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">🔍 Search Component Photos</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${searches.map(s=>`
+          <a href="https://www.google.com/search?q=${encodeURIComponent(s.query)}&tbm=isch" target="_blank"
+             style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px;font-size:11px;font-weight:600;color:${color};text-decoration:none;display:flex;align-items:center;gap:5px">
+            <span>🔍</span>${s.name}
+          </a>`).join('')}
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+      <button onclick="startDiag('${equipType}')" style="background:${color};color:white;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🔍 Diagnose Problem</button>
+      <button onclick="showDiagHome()" style="background:#f1f5f9;color:#475569;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">← Back</button>
+    </div>`;
 }
 
 </script>
