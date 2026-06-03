@@ -835,13 +835,40 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
 <div class="modal-bg" id="email-modal">
   <div class="modal">
     <h3 id="email-modal-title">✉ Email Invoice</h3>
-    <p class="modal-sub">Full details sent in email body — no attachment needed!</p>
-    <div class="field"><label>To</label><input type="email" id="e-to"></div>
-    <div class="field"><label>Subject</label><input type="text" id="e-sub"></div>
-    <div class="field"><label>Preview</label><div class="preview-box" id="e-preview"></div></div>
-    <div class="modal-btns">
-      <button class="btn-cancel" onclick="closeEmail()">Cancel</button>
-      <button class="btn-send" onclick="doSend()">Send ✉</button>
+
+    <!-- Step indicator -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px">
+      <div id="email-step1-indicator" style="background:#1a5fa8;color:white;border-radius:8px;padding:6px;text-align:center;font-size:11px;font-weight:700">
+        Step 1: Download PDF
+      </div>
+      <div id="email-step2-indicator" style="background:#e2e8f0;color:#94a3b8;border-radius:8px;padding:6px;text-align:center;font-size:11px;font-weight:700">
+        Step 2: Send Email
+      </div>
+    </div>
+
+    <!-- Step 1: Download PDF -->
+    <div id="email-step1">
+      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px;margin-bottom:12px;text-align:center">
+        <div style="font-size:32px;margin-bottom:8px">📄</div>
+        <div style="font-size:14px;font-weight:700;color:#166534;margin-bottom:4px">Step 1 — Download the PDF</div>
+        <div style="font-size:12px;color:#166534;margin-bottom:12px">First download the invoice PDF so you can attach it to your email</div>
+        <button onclick="downloadAndNext()" style="background:#0d9e6e;color:white;border:none;border-radius:10px;padding:12px 24px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;width:100%">⬇ Download PDF Now</button>
+      </div>
+      <button class="btn-cancel" style="width:100%" onclick="closeEmail()">Cancel</button>
+    </div>
+
+    <!-- Step 2: Send Email -->
+    <div id="email-step2" style="display:none">
+      <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#92400e">
+        <strong>📎 PDF downloaded!</strong> Open your email app, tap the <strong>paperclip/attachment icon</strong> and attach the PDF from your Downloads folder.
+      </div>
+      <div class="field"><label>To</label><input type="email" id="e-to"></div>
+      <div class="field"><label>Subject</label><input type="text" id="e-sub"></div>
+      <div class="field"><label>Message preview</label><div class="preview-box" id="e-preview" style="max-height:120px"></div></div>
+      <div class="modal-btns">
+        <button class="btn-cancel" onclick="closeEmail()">Cancel</button>
+        <button class="btn-send" onclick="doSend()">Open Mail App ✉</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1697,7 +1724,30 @@ function openEmail(){
   document.getElementById('e-to').value=d.client_email||'';
   document.getElementById('e-sub').value=(isEst?'Estimate ':'Invoice ')+d.inv_num+' from KPC Plumbing';
   document.getElementById('e-preview').textContent=buildEmailBody(d);
+  // Reset to step 1
+  document.getElementById('email-step1').style.display='block';
+  document.getElementById('email-step2').style.display='none';
+  document.getElementById('email-step1-indicator').style.background='#1a5fa8';
+  document.getElementById('email-step1-indicator').style.color='white';
+  document.getElementById('email-step2-indicator').style.background='#e2e8f0';
+  document.getElementById('email-step2-indicator').style.color='#94a3b8';
   document.getElementById('email-modal').classList.add('open');
+}
+
+function downloadAndNext(){
+  // Download the PDF
+  const d=getForm();
+  const prefix=d.doc_type==='estimate'?'KPC-Estimate-':'KPC-Invoice-';
+  buildPDF().save(prefix+d.inv_num+'.pdf');
+  // Move to step 2
+  setTimeout(()=>{
+    document.getElementById('email-step1').style.display='none';
+    document.getElementById('email-step2').style.display='block';
+    document.getElementById('email-step1-indicator').style.background='#0d9e6e';
+    document.getElementById('email-step1-indicator').textContent='✅ PDF Downloaded';
+    document.getElementById('email-step2-indicator').style.background='#1a5fa8';
+    document.getElementById('email-step2-indicator').style.color='white';
+  },500);
 }
 function closeEmail(){document.getElementById('email-modal').classList.remove('open');}
 async function doSend(){
