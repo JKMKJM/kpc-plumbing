@@ -3276,29 +3276,46 @@ async function loadTimesheet(){
   checkMissedClockOut();
 }
 
-function restoreClockState(){
+async function restoreClockState(){
   const tech=document.getElementById('ts-tech-select').value;
   const date=document.getElementById('ts-date').value;
   if(!tech||!date)return;
 
-  const savedClockIn=localStorage.getItem('kpc_clock_in_'+tech+'_'+date);
-  const savedJob=localStorage.getItem('kpc_clock_job_'+tech+'_'+date);
+  // First check localStorage
+  let savedClockIn=localStorage.getItem('kpc_clock_in_'+tech+'_'+date);
+  let savedJob=localStorage.getItem('kpc_clock_job_'+tech+'_'+date);
+
+  // Also check Supabase for open entries (persists across browser restarts)
+  if(!savedClockIn){
+    try{
+      const{data}=await sb.from('time_entries')
+        .select('*')
+        .eq('technician',tech)
+        .eq('entry_date',date)
+        .is('clock_out',null)
+        .limit(1);
+      if(data&&data.length>0){
+        savedClockIn=data[0].clock_in;
+        savedJob=data[0].job_description;
+        // Restore to localStorage too
+        if(savedClockIn)localStorage.setItem('kpc_clock_in_'+tech+'_'+date,savedClockIn);
+        if(savedJob)localStorage.setItem('kpc_clock_job_'+tech+'_'+date,savedJob);
+      }
+    }catch(e){console.error('Restore clock state error:',e);}
+  }
 
   if(savedClockIn){
-    // Restore clock-in state
     document.getElementById('ts-clock-in').value=savedClockIn;
     if(savedJob){
       document.getElementById('ts-job-desc').value=savedJob;
-      document.getElementById('ts-job-select').value='';
+      // Enable clock in button so it can be shown
+      const btn=document.getElementById('clock-in-btn');
+      if(btn){btn.disabled=false;btn.style.background='#0d9e6e';}
     }
-    // Enable clock out button
     document.getElementById('clock-in-btn').style.display='none';
-    document.getElementById('clock-in-btn').disabled=false;
     document.getElementById('clock-out-btn').style.display='flex';
     document.getElementById('ts-clock-status').textContent='🟢 Clocked in at '+formatTime(savedClockIn)+(savedJob?' — '+savedJob:'');
     document.getElementById('ts-clock-status').style.color='#0d9e6e';
-    // Show save prompt reminder
-    document.getElementById('ts-save-prompt').style.display='block';
   }
 }
 
@@ -3361,10 +3378,37 @@ async function clockIn(){
   const timeStr=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
   clockInTime=timeStr;
   document.getElementById('ts-clock-in').value=timeStr;
+
+  // Save to localStorage AND Supabase so it persists across browser restarts
   localStorage.setItem('kpc_clock_in_'+tech+'_'+date,timeStr);
-  // Save job description so it can be restored
-  const jobDesc=document.getElementById('ts-job-desc').value;
-  if(jobDesc)localStorage.setItem('kpc_clock_job_'+tech+'_'+date,jobDesc);
+  if(job)localStorage.setItem('kpc_clock_job_'+tech+'_'+date,job);
+
+  // Save active clock-in record to Supabase (no clock_out yet)
+  try{
+    // Remove any existing open entries for this tech/date first
+    await sb.from('time_entries').delete()
+      .eq('technician',tech)
+      .eq('entry_date',date)
+      .is('clock_out',null);
+    // Insert new open entry
+    await sb.from('time_entries').insert({
+      technician:tech,
+      entry_date:date,
+      clock_in:timeStr,
+      clock_out:null,
+      hours_regular:0,
+      hours_overtime:0,
+      hours_drive:0,
+      hours_shop:0,
+      total_hours:0,
+      time_type:'regular',
+      job_description:job,
+      wo_num:document.getElementById('ts-wo-num').value||'',
+      notes:'',
+      week_start:getWeekStart(date)
+    });
+  }catch(e){console.error('Clock-in save error:',e);}
+
   toast('Clocked in at '+formatTime(timeStr)+' on: '+job+' ✅');
   document.getElementById('clock-in-btn').style.display='none';
   document.getElementById('clock-in-btn').disabled=false;
@@ -3394,6 +3438,13 @@ async function clockOut(){
   // Auto-calculate hours
   autoCalcHours();
 
+  // Update the open Supabase record with clock_out time then save properly
+  try{
+    await sb.from('time_entries').delete()
+      .eq('technician',tech)
+      .eq('entry_date',date)
+      .is('clock_out',null);
+  }catch(e){}
   // AUTO-SAVE — no extra step needed
   await saveTimeEntry(true);
   document.getElementById('ts-clock-status').textContent='✅ Clocked out at '+formatTime(timeStr)+' — Entry saved automatically!';
