@@ -1400,6 +1400,7 @@ function getForm(){
 async function saveDoc(){
   setSyncStatus('syncing');
   const data=getForm();
+  // Remove any fields that might not exist in the docs table
   try{
     let result;
     if(currentDocId){
@@ -1407,15 +1408,35 @@ async function saveDoc(){
     } else {
       result=await sb.from('docs').insert(data).select();
     }
-    if(result.error)throw result.error;
+    if(result.error){
+      console.error('Save error details:',result.error);
+      throw new Error(result.error.message||'Unknown error');
+    }
     if(result.data&&result.data[0])currentDocId=result.data[0].id;
     setSyncStatus('ok');
-    toast((docType==='estimate'?'Estimate':'Invoice')+' saved & synced! ☁');
+    // Show success banner
+    showSaveBanner(true,(docType==='estimate'?'Estimate':'Invoice')+' saved & synced! ☁');
   } catch(e){
     setSyncStatus('error');
-    toast('Save failed — check connection');
-    console.error(e);
+    showSaveBanner(false,'Save failed: '+e.message);
+    console.error('saveDoc error:',e);
   }
+}
+
+function showSaveBanner(success, msg){
+  // Remove existing banner
+  const existing=document.getElementById('save-result-banner');
+  if(existing)existing.remove();
+  const banner=document.createElement('div');
+  banner.id='save-result-banner';
+  banner.style.cssText=`background:${success?'#f0fdf4':'#fee2e2'};border:1px solid ${success?'#86efac':'#fca5a5'};border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:13px;font-weight:600;color:${success?'#166534':'#dc2626'};text-align:center`;
+  banner.textContent=msg;
+  // Insert before action row
+  const actionRow=document.querySelector('.action-row');
+  if(actionRow)actionRow.parentNode.insertBefore(banner,actionRow);
+  toast(msg);
+  // Auto remove after 5 seconds on success
+  if(success)setTimeout(()=>{if(banner.parentNode)banner.remove();},5000);
 }
 
 async function loadAndRenderSaved(){
@@ -3259,7 +3280,36 @@ async function loadTimesheet(){
   document.getElementById('ts-date').value=today;
 
   await fetchTimeEntries();
+
+  // ---- Restore clock-in state if still clocked in ----
+  restoreClockState();
   checkMissedClockOut();
+}
+
+function restoreClockState(){
+  const tech=document.getElementById('ts-tech-select').value;
+  const date=document.getElementById('ts-date').value;
+  if(!tech||!date)return;
+
+  const savedClockIn=localStorage.getItem('kpc_clock_in_'+tech+'_'+date);
+  const savedJob=localStorage.getItem('kpc_clock_job_'+tech+'_'+date);
+
+  if(savedClockIn){
+    // Restore clock-in state
+    document.getElementById('ts-clock-in').value=savedClockIn;
+    if(savedJob){
+      document.getElementById('ts-job-desc').value=savedJob;
+      document.getElementById('ts-job-select').value='';
+    }
+    // Enable clock out button
+    document.getElementById('clock-in-btn').style.display='none';
+    document.getElementById('clock-in-btn').disabled=false;
+    document.getElementById('clock-out-btn').style.display='flex';
+    document.getElementById('ts-clock-status').textContent='🟢 Clocked in at '+formatTime(savedClockIn)+(savedJob?' — '+savedJob:'');
+    document.getElementById('ts-clock-status').style.color='#0d9e6e';
+    // Show save prompt reminder
+    document.getElementById('ts-save-prompt').style.display='block';
+  }
 }
 
 async function fetchTimeEntries(){
@@ -3322,6 +3372,9 @@ async function clockIn(){
   clockInTime=timeStr;
   document.getElementById('ts-clock-in').value=timeStr;
   localStorage.setItem('kpc_clock_in_'+tech+'_'+date,timeStr);
+  // Save job description so it can be restored
+  const jobDesc=document.getElementById('ts-job-desc').value;
+  if(jobDesc)localStorage.setItem('kpc_clock_job_'+tech+'_'+date,jobDesc);
   toast('Clocked in at '+formatTime(timeStr)+' on: '+job+' ✅');
   document.getElementById('clock-in-btn').style.display='none';
   document.getElementById('clock-in-btn').disabled=false;
@@ -3344,6 +3397,7 @@ async function clockOut(){
   document.getElementById('ts-clock-status').textContent='Clocked out at '+formatTime(timeStr);
   document.getElementById('ts-clock-status').style.color='#64748b';
   localStorage.removeItem('kpc_clock_in_'+tech+'_'+date);
+  localStorage.removeItem('kpc_clock_job_'+tech+'_'+date);
   toast('Clocked out at '+formatTime(timeStr));
   // Auto-calculate and prompt to save
   autoCalcHours();
