@@ -3983,13 +3983,24 @@ function onJobDescInput(val){
 // ============================================================
 
 function getTechNames(){
-  // Returns array of all tech names
+  // Returns array of all tech names from localStorage (Supabase loads async separately)
   const stored=localStorage.getItem('kpc_techs');
   if(stored){
     try{return JSON.parse(stored);}catch(e){}
   }
-  // Default list
   return['Jonathan McKay'];
+}
+
+async function loadTechNamesFromCloud(){
+  try{
+    const{data,error}=await sb.from('settings').select('setting_value').eq('setting_key','tech_names').single();
+    if(error||!data)return;
+    const techs=JSON.parse(data.setting_value);
+    if(techs&&techs.length){
+      localStorage.setItem('kpc_techs',JSON.stringify(techs));
+      updateAllTechDropdowns();
+    }
+  }catch(e){console.error('Load tech names error:',e);}
 }
 
 function loadSettings(){
@@ -4027,7 +4038,7 @@ function addTechField(name='',num){
   list.appendChild(div);
 }
 
-function saveTechNames(){
+async function saveTechNames(){
   const list=document.getElementById('tech-names-list');
   const techs=['Jonathan McKay'];
   if(list){
@@ -4036,19 +4047,53 @@ function saveTechNames(){
       if(val)techs.push(val);
     });
   }
+  // Save to localStorage AND Supabase
   localStorage.setItem('kpc_techs',JSON.stringify(techs));
+  try{
+    await sb.from('settings').upsert({
+      setting_key:'tech_names',
+      setting_value:JSON.stringify(techs)
+    },{onConflict:'setting_key'});
+  }catch(e){console.error('Settings save error:',e);}
   updateAllTechDropdowns();
   toast('Technician names saved! ✅ ('+techs.length+' techs)');
 }
 
-function saveBizSettings(){
-  localStorage.setItem('kpc_biz_name',document.getElementById('setting-biz-name').value||'KPC Plumbing');
-  localStorage.setItem('kpc_biz_phone',document.getElementById('setting-biz-phone').value||'409.553.9241');
-  localStorage.setItem('kpc_biz_email',document.getElementById('setting-biz-email').value||'');
-  localStorage.setItem('kpc_biz_addr',document.getElementById('setting-biz-addr').value||'');
-  // Apply to current invoice fields
+async function saveBizSettings(){
+  const bizData={
+    name:document.getElementById('setting-biz-name').value||'KPC Plumbing',
+    phone:document.getElementById('setting-biz-phone').value||'409.553.9241',
+    email:document.getElementById('setting-biz-email').value||'',
+    addr:document.getElementById('setting-biz-addr').value||''
+  };
+  localStorage.setItem('kpc_biz_name',bizData.name);
+  localStorage.setItem('kpc_biz_phone',bizData.phone);
+  localStorage.setItem('kpc_biz_email',bizData.email);
+  localStorage.setItem('kpc_biz_addr',bizData.addr);
+  // Save to Supabase too
+  try{
+    await sb.from('settings').upsert({
+      setting_key:'biz_info',
+      setting_value:JSON.stringify(bizData)
+    },{onConflict:'setting_key'});
+  }catch(e){console.error('Biz settings save error:',e);}
   applyBizSettings();
   toast('Business info saved! ✅');
+}
+
+async function loadBizSettingsFromCloud(){
+  try{
+    const{data,error}=await sb.from('settings').select('setting_value').eq('setting_key','biz_info').single();
+    if(error||!data)return;
+    const biz=JSON.parse(data.setting_value);
+    if(biz){
+      if(biz.name)localStorage.setItem('kpc_biz_name',biz.name);
+      if(biz.phone)localStorage.setItem('kpc_biz_phone',biz.phone);
+      if(biz.email)localStorage.setItem('kpc_biz_email',biz.email);
+      if(biz.addr)localStorage.setItem('kpc_biz_addr',biz.addr);
+      applyBizSettings();
+    }
+  }catch(e){console.error('Load biz settings error:',e);}
 }
 
 function applyBizSettings(){
@@ -4111,6 +4156,11 @@ function updateAllTechDropdowns(){
 window.addEventListener('load',()=>{
   updateAllTechDropdowns();
   applyBizSettings();
+  // Load settings from cloud (overrides localStorage if cloud has newer data)
+  setTimeout(async()=>{
+    await loadTechNamesFromCloud();
+    await loadBizSettingsFromCloud();
+  },1000);
 });
 
 
