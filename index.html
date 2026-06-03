@@ -801,24 +801,14 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
   <div id="tab-settings" class="content" style="display:none">
     <div class="card">
       <div class="card-title">Technician Names</div>
-      <p style="font-size:13px;color:#64748b;margin-bottom:12px">Set your technician names here — they update everywhere in the app automatically.</p>
+      <p style="font-size:13px;color:#64748b;margin-bottom:12px">Add as many technicians as you need. Names update everywhere in the app automatically.</p>
       <div class="field">
         <label>Technician 1 (Owner)</label>
         <input type="text" id="tech-1-name" value="Jonathan McKay" style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#f1f5f9;color:#94a3b8;font-family:inherit" readonly>
         <div style="font-size:11px;color:#94a3b8;margin-top:3px">Owner name is fixed</div>
       </div>
-      <div class="field">
-        <label>Technician 2</label>
-        <input type="text" id="tech-2-name" placeholder="Enter technician name..." style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit">
-      </div>
-      <div class="field">
-        <label>Technician 3</label>
-        <input type="text" id="tech-3-name" placeholder="Enter technician name..." style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit">
-      </div>
-      <div class="field">
-        <label>Technician 4</label>
-        <input type="text" id="tech-4-name" placeholder="Enter technician name..." style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit">
-      </div>
+      <div id="tech-names-list"></div>
+      <button onclick="addTechField()" style="width:100%;padding:10px;background:none;border:1px dashed #cbd5e1;border-radius:8px;color:#64748b;font-size:13px;cursor:pointer;font-family:inherit;margin-bottom:10px">＋ Add Another Technician</button>
       <button class="pg-main-btn" onclick="saveTechNames()">💾 Save Technician Names</button>
     </div>
     <div class="card">
@@ -3392,16 +3382,22 @@ async function clockOut(){
   const now=new Date();
   const timeStr=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
   document.getElementById('ts-clock-out').value=timeStr;
-  document.getElementById('clock-out-btn').style.display='none';
   document.getElementById('clock-in-btn').style.display='flex';
-  document.getElementById('ts-clock-status').textContent='Clocked out at '+formatTime(timeStr);
+  document.getElementById('clock-in-btn').disabled=true;
+  document.getElementById('clock-in-btn').style.background='#94a3b8';
+  document.getElementById('clock-out-btn').style.display='none';
+  document.getElementById('ts-clock-status').textContent='Saving...';
   document.getElementById('ts-clock-status').style.color='#64748b';
   localStorage.removeItem('kpc_clock_in_'+tech+'_'+date);
   localStorage.removeItem('kpc_clock_job_'+tech+'_'+date);
-  toast('Clocked out at '+formatTime(timeStr));
-  // Auto-calculate and prompt to save
+
+  // Auto-calculate hours
   autoCalcHours();
-  document.getElementById('ts-save-prompt').style.display='block';
+
+  // AUTO-SAVE — no extra step needed
+  await saveTimeEntry(true);
+  document.getElementById('ts-clock-status').textContent='✅ Clocked out at '+formatTime(timeStr)+' — Entry saved automatically!';
+  document.getElementById('ts-clock-status').style.color='#0d9e6e';
 }
 
 function autoCalcHours(){
@@ -3417,7 +3413,7 @@ function autoCalcHours(){
   }
 }
 
-async function saveTimeEntry(){
+async function saveTimeEntry(autoSave=false){
   const tech=document.getElementById('ts-tech-select').value;
   const date=document.getElementById('ts-date').value;
   if(!tech){toast('Select your name');return;}
@@ -3459,7 +3455,7 @@ async function saveTimeEntry(){
     }
     if(result.error)throw result.error;
     setSyncStatus('ok');
-    toast('Time entry saved! ✅');
+    if(!autoSave)toast('Time entry saved! ✅');
     // Reset form
     ['ts-clock-in','ts-clock-out','ts-reg-hours','ts-ot-hours','ts-drive-hours','ts-shop-hours','ts-job-desc','ts-wo-num','ts-notes'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('ts-save-prompt').style.display='none';
@@ -3886,35 +3882,62 @@ function onJobDescInput(val){
 // ============================================================
 
 function getTechNames(){
-  return{
-    t1:'Jonathan McKay',
-    t2:localStorage.getItem('kpc_tech2')||'Tech 2',
-    t3:localStorage.getItem('kpc_tech3')||'Tech 3',
-    t4:localStorage.getItem('kpc_tech4')||'Tech 4'
-  };
+  // Returns array of all tech names
+  const stored=localStorage.getItem('kpc_techs');
+  if(stored){
+    try{return JSON.parse(stored);}catch(e){}
+  }
+  // Default list
+  return['Jonathan McKay'];
 }
 
 function loadSettings(){
-  const t=getTechNames();
-  document.getElementById('tech-2-name').value=t.t2==='Tech 2'?'':t.t2;
-  document.getElementById('tech-3-name').value=t.t3==='Tech 3'?'':t.t3;
-  document.getElementById('tech-4-name').value=t.t4==='Tech 4'?'':t.t4;
+  const techs=getTechNames();
+  const list=document.getElementById('tech-names-list');
+  if(list){
+    list.innerHTML='';
+    // Skip first (owner) - show techs 2 onwards
+    techs.slice(1).forEach((name,i)=>{
+      addTechField(name,i+2);
+    });
+    // If no extra techs yet, add one empty field
+    if(techs.length<=1)addTechField('',2);
+  }
   document.getElementById('setting-biz-name').value=localStorage.getItem('kpc_biz_name')||'KPC Plumbing';
   document.getElementById('setting-biz-phone').value=localStorage.getItem('kpc_biz_phone')||'409.553.9241';
   document.getElementById('setting-biz-email').value=localStorage.getItem('kpc_biz_email')||'';
   document.getElementById('setting-biz-addr').value=localStorage.getItem('kpc_biz_addr')||'';
 }
 
+function addTechField(name='',num){
+  const list=document.getElementById('tech-names-list');
+  if(!list)return;
+  const existing=list.querySelectorAll('.tech-field-row').length;
+  const fieldNum=num||existing+2;
+  const div=document.createElement('div');
+  div.className='tech-field-row field';
+  div.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:10px';
+  div.innerHTML=`
+    <div style="flex:1">
+      <label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px">Technician ${fieldNum}</label>
+      <input type="text" value="${name}" placeholder="Enter technician name..." style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit">
+    </div>
+    <button onclick="this.parentNode.remove()" style="background:#fee2e2;border:none;border-radius:8px;padding:8px 10px;cursor:pointer;color:#ef4444;font-size:16px;margin-top:18px;flex-shrink:0">✕</button>`;
+  list.appendChild(div);
+}
+
 function saveTechNames(){
-  const t2=document.getElementById('tech-2-name').value.trim()||'Tech 2';
-  const t3=document.getElementById('tech-3-name').value.trim()||'Tech 3';
-  const t4=document.getElementById('tech-4-name').value.trim()||'Tech 4';
-  localStorage.setItem('kpc_tech2',t2);
-  localStorage.setItem('kpc_tech3',t3);
-  localStorage.setItem('kpc_tech4',t4);
-  // Update all dropdowns in the app
+  const list=document.getElementById('tech-names-list');
+  const techs=['Jonathan McKay'];
+  if(list){
+    list.querySelectorAll('.tech-field-row input').forEach(inp=>{
+      const val=inp.value.trim();
+      if(val)techs.push(val);
+    });
+  }
+  localStorage.setItem('kpc_techs',JSON.stringify(techs));
   updateAllTechDropdowns();
-  toast('Technician names saved! ✅');
+  toast('Technician names saved! ✅ ('+techs.length+' techs)');
 }
 
 function saveBizSettings(){
@@ -3939,18 +3962,14 @@ function applyBizSettings(){
 }
 
 function updateAllTechDropdowns(){
-  const t=getTechNames();
-  const opts=`<option value="">Select technician...</option>
-    <option>${t.t1}</option>
-    <option>${t.t2}</option>
-    <option>${t.t3}</option>
-    <option>${t.t4}</option>`;
+  const techs=getTechNames();
+  const techOptions=techs.map(t=>`<option>${t}</option>`).join('');
 
   // Invoice technician dropdown
   const techName=document.getElementById('tech-name');
   if(techName&&techName.tagName==='SELECT'){
     const cur=techName.value;
-    techName.innerHTML=opts;
+    techName.innerHTML='<option value="">Select technician...</option>'+techOptions;
     if(cur)techName.value=cur;
   }
 
@@ -3958,20 +3977,15 @@ function updateAllTechDropdowns(){
   const woAssigned=document.getElementById('wo-assigned');
   if(woAssigned&&woAssigned.tagName==='SELECT'){
     const cur=woAssigned.value;
-    woAssigned.innerHTML=opts;
+    woAssigned.innerHTML='<option value="">Assign to...</option>'+techOptions;
     if(cur)woAssigned.value=cur;
   }
 
   // Timesheet tech select
-  const tsOpts=`<option value="">Select name...</option>
-    <option>${t.t1}</option>
-    <option>${t.t2}</option>
-    <option>${t.t3}</option>
-    <option>${t.t4}</option>`;
   const tsTech=document.getElementById('ts-tech-select');
   if(tsTech){
     const cur=tsTech.value;
-    tsTech.innerHTML=tsOpts;
+    tsTech.innerHTML='<option value="">Select name...</option>'+techOptions;
     if(cur)tsTech.value=cur;
   }
 
@@ -3981,9 +3995,15 @@ function updateAllTechDropdowns(){
     if(!el)return;
     const cur=el.value;
     const prefix=id==='sched-tech-filter'?'<option value="">All Technicians</option>':'<option value="">Assign to...</option>';
-    el.innerHTML=prefix+`<option>${t.t1}</option><option>${t.t2}</option><option>${t.t3}</option><option>${t.t4}</option>`;
+    el.innerHTML=prefix+techOptions;
     if(cur)el.value=cur;
   });
+
+  // Update TECH_LIST used in schedule
+  if(typeof TECH_LIST!=='undefined'){
+    TECH_LIST.length=0;
+    techs.forEach(t=>TECH_LIST.push(t));
+  }
 }
 
 // Run on app load
