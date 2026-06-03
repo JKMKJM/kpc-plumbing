@@ -3371,6 +3371,10 @@ async function restoreClockState(){
 
 async function fetchTimeEntries(){
   const tech=document.getElementById('ts-tech-select').value;
+  if(!tech){
+    document.getElementById('ts-entries-list').innerHTML='<div class="empty-state" style="padding:20px"><p>Select your name above to see your time entries.</p></div>';
+    return;
+  }
   const week=document.getElementById('ts-week-start').value||tsWeekStart;
   const weekEnd=getWeekEnd(week);
 
@@ -3388,7 +3392,30 @@ async function fetchTimeEntries(){
     setSyncStatus('ok');
     renderTimesheet();
     renderWeekSummary();
-  }catch(e){setSyncStatus('error');toast('Could not load time entries');}
+    if(!timeEntries.length){
+      // Check if there are entries for this tech on ANY date
+      const{data:anyData}=await sb.from('time_entries')
+        .select('entry_date,technician')
+        .eq('technician',tech)
+        .order('entry_date',{ascending:false})
+        .limit(5);
+      if(anyData&&anyData.length>0){
+        const dates=anyData.map(e=>e.entry_date).join(', ');
+        document.getElementById('ts-entries-list').innerHTML=`<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:12px;font-size:13px;color:#92400e">
+          No entries for week of <strong>${week}</strong>.<br>
+          Found entries on: <strong>${dates}</strong><br>
+          <button onclick="goToEntryDate('${anyData[0].entry_date}')" style="margin-top:8px;background:#f59e0b;color:white;border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600">Jump to ${anyData[0].entry_date}</button>
+        </div>`;
+      }
+    }
+  }catch(e){setSyncStatus('error');toast('Could not load: '+e.message);console.error(e);}
+}
+
+function goToEntryDate(date){
+  const weekStart=getWeekStart(date);
+  document.getElementById('ts-week-start').value=weekStart;
+  document.getElementById('ts-date').value=date;
+  fetchTimeEntries();
 }
 
 async function fetchAllTechEntries(){
@@ -4300,7 +4327,7 @@ async function exportPayrollPDF(){
 
     doc.setFillColor(220,230,245);doc.rect(lm,y,pw,18,'F');
     doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(...ac);
-    doc.text('👤 '+tech+' — Daily Breakdown',lm+6,y+13);y+=18;
+    doc.text('TECH: '+tech+' — Daily Breakdown',lm+6,y+13);y+=18;
 
     // Group by date
     const byDate={};
