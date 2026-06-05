@@ -197,8 +197,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
     </div>
   </div>
   <input type="file" id="logo-file" accept="image/*" style="display:none" onchange="changeLogo(this)">
-  <input type="file" id="photo-file" accept="image/*" capture="environment" multiple style="display:none" onchange="handlePhotos(this)">
-<input type="file" id="wo-photo-file" accept="image/*" capture="environment" multiple style="display:none" onchange="handleWOPhotos(this)">
+  <input type="file" id="wo-photo-file" accept="image/*" capture="environment" multiple style="display:none" onchange="handleWOPhotos(this)">
 
   <div class="tabs">
     <div class="tab active" onclick="showTab('doc')">📄 Invoice</div>
@@ -325,16 +324,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       </div>
     </div>
 
-    <!-- PHOTOS -->
-    <div class="card">
-      <div class="card-title">Job site photos</div>
-      <div class="photos-grid" id="photos-grid">
-        <div class="photo-add" onclick="document.getElementById('photo-file').click()">
-          <span style="font-size:24px">📷</span>
-          <span>Add photo</span>
-        </div>
-      </div>
-    </div>
+    <!-- Photos removed from invoices — use Work Order for job photos -->
 
     <div class="card">
       <div class="card-title">Notes</div>
@@ -1069,7 +1059,7 @@ function ld(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}c
 function sv(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 
 let items=[];
-let photos=[];
+// photos array removed — WO photos handled separately
 let allDocs=[];
 let allCustomers=[];
 let customPG=ld('kpc_custom_pg',[]);
@@ -1155,38 +1145,12 @@ function setPayMethod(m){
 }
 
 // PHOTOS
-function handlePhotos(input){
-  const files=Array.from(input.files);
-  files.forEach(file=>{
-    const r=new FileReader();
-    r.onload=e=>{
-      photos.push(e.target.result);
-      renderPhotos();
-    };
-    r.readAsDataURL(file);
-  });
-  input.value='';
-}
-
-function renderPhotos(){
-  const grid=document.getElementById('photos-grid');
-  let html='';
-  photos.forEach((p,i)=>{
-    html+=`<div class="photo-thumb" onclick="openImgModal('${i}')"><img src="${p}" alt="Job photo"><button class="photo-del" onclick="event.stopPropagation();delPhoto(${i})">✕</button></div>`;
-  });
-  html+=`<div class="photo-add" onclick="document.getElementById('photo-file').click()"><span style="font-size:24px">📷</span><span>Add photo</span></div>`;
-  grid.innerHTML=html;
-}
-
-function delPhoto(i){photos.splice(i,1);renderPhotos();}
+// Invoice photos removed — photos only on Work Orders
 function openImgModal(i){
-  if(typeof i==='string'&&i.startsWith('wo_')){
-    const idx=parseInt(i.replace('wo_',''));
-    const p=woPhotos[idx];
-    document.getElementById('img-modal-src').src=p.url||p.localSrc||'';
-  } else {
-    document.getElementById('img-modal-src').src=photos[i];
-  }
+  // Only WO photos now
+  const idx=typeof i==='string'&&i.startsWith('wo_')?parseInt(i.replace('wo_','')):parseInt(i);
+  const p=woPhotos[idx];
+  if(p)document.getElementById('img-modal-src').src=p.url||p.localSrc||'';
   document.getElementById('img-modal').classList.add('open');
 }
 function closeImgModal(){document.getElementById('img-modal').classList.remove('open');}
@@ -1233,7 +1197,7 @@ async function getNextNumber(type){
 
 async function newDoc(){
   if(!confirm('Start a new document? Unsaved changes will be lost.'))return;
-  items=[];photos=[];currentDocId=null;payStatus='unpaid';payMethod='';
+  items=[];currentDocId=null;payStatus='unpaid';payMethod='';
   ['job-num','due-date','po-num','client-name','client-email','client-phone','client-addr','notes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('tax-rate').value='0';
   document.getElementById('inv-date').value=new Date().toISOString().split('T')[0];
@@ -1448,7 +1412,7 @@ function getForm(){
     amount_paid:parseFloat(document.getElementById('amount-paid')?.value)||0,
     balance_due:parseFloat(document.getElementById('balance-due')?.value)||0,
     check_num:document.getElementById('check-num')?.value||'',
-    photos:photos,
+
     total:Math.round((sub+tax)*100)/100
   };
 }
@@ -1461,9 +1425,13 @@ async function saveDoc(){
     if(currentDocId){
       // Verify this currentDocId still matches what we're editing
       // If inv_num changed, it's a new document
-      const{data:existing}=await sb.from('docs').select('inv_num').eq('id',currentDocId).single();
-      if(existing&&existing.inv_num!==data.inv_num){
-        // Different invoice number = new document, not an update
+      try{
+        const{data:existing}=await sb.from('docs').select('inv_num').eq('id',currentDocId).single();
+        if(existing&&existing.inv_num!==data.inv_num){
+          currentDocId=null;
+        }
+      }catch(e){
+        // Record not found — treat as new
         currentDocId=null;
       }
     }
@@ -1600,7 +1568,6 @@ function loadDoc(id){
   document.getElementById('notes').value=doc.notes||'';
   document.getElementById('tech-name').value=doc.technician||'';
   items=(doc.items||[]).map(it=>({...it,id:Date.now()+Math.random()}));
-  photos=doc.photos||[];
   payStatus=doc.payment_status||( doc.paid?'paid':'unpaid');
   payMethod=doc.payment_method||'';
   setPayStatus(payStatus);
@@ -1612,7 +1579,7 @@ function loadDoc(id){
   });
   const checkField=document.getElementById('check-num-field');
   if(checkField)checkField.style.display=payMethod==='check'?'block':'none';
-  renderItems();renderPhotos();showTab('doc');
+  renderItems();showTab('doc');
   setTimeout(()=>{refreshPhoneLinks();refreshAddrLinks();},100);
   toast('Loaded — editing existing record');
 }
@@ -1903,20 +1870,7 @@ function buildPDF(){
   }
   if(d.notes){y+=26;doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(120,120,120);doc.text(d.notes,lm,y,{maxWidth:pw});}
   if(isEst){y+=18;doc.setFontSize(8);doc.setTextColor(...ac);doc.text('This estimate is valid for 30 days.',lm,y);}
-  // Photos on PDF
-  if(photos.length>0){
-    y+=26;
-    doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(...ac);
-    doc.text('JOB SITE PHOTOS',lm,y);y+=12;
-    let px=lm;
-    photos.slice(0,6).forEach((p,i)=>{
-      try{
-        doc.addImage(p,'JPEG',px,y,80,80);
-        px+=88;
-        if((i+1)%5===0){y+=88;px=lm;}
-      }catch(e){}
-    });
-  }
+  // Photos not included on invoices
   const fy=726;
   doc.setFillColor(...bg);doc.rect(0,fy-6,612,80,'F');
   doc.setFillColor(...ac);doc.rect(0,fy-6,6,80,'F');
