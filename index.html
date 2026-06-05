@@ -2751,6 +2751,8 @@ async function uploadWOPhoto(file,tempId){
     if(idx>=0){woPhotos[idx]={url,path,localSrc:woPhotos[idx].localSrc,uploading:false};}
     renderWOPhotos();
     toast('Photo uploaded! ✅');
+    // Auto-save photo URLs to work order record immediately
+    await autoSaveWOPhotos();
   }catch(e){
     console.error('Photo upload failed:',e);
     // Keep local preview even if upload fails
@@ -2758,6 +2760,21 @@ async function uploadWOPhoto(file,tempId){
     if(idx>=0)woPhotos[idx].uploading=false;
     renderWOPhotos();
     toast('Photo saved locally (upload failed)');
+  }
+}
+
+
+// Auto-save photo URLs to work order record after upload
+async function autoSaveWOPhotos(){
+  if(!currentWOId)return; // Can only auto-save if WO already exists in DB
+  try{
+    const photoUrls=woPhotos
+      .filter(p=>p.url&&p.url.startsWith('http'))
+      .map(p=>({url:p.url,path:p.path}));
+    await sb.from('work_orders').update({wo_photos:photoUrls}).eq('id',currentWOId);
+    console.log('Photos auto-saved to work order');
+  }catch(e){
+    console.error('Photo auto-save failed:',e);
   }
 }
 
