@@ -1391,7 +1391,13 @@ function renderPG(){
   const filtered=all.filter(i=>(pgFilter==='All'||i.cat===pgFilter)&&(!search||i.name.toLowerCase().includes(search)));
   const c=document.getElementById('pg-list');
   if(!filtered.length){c.innerHTML='<div class="empty-state"><p>No items found</p></div>';return;}
-  c.innerHTML=filtered.map(i=>`<div class="pg-item"><div class="pg-item-info"><div class="pg-item-name">${i.name}</div><div style="font-size:11px;color:#64748b;margin-top:2px"><span class="cat-dot" style="background:${CAT_COLORS[i.cat]||'#64748b'}"></span>${i.cat}</div></div><div class="pg-item-price">$${i.price.toFixed(2)}</div><button class="pg-add" onclick='addFromPG(${JSON.stringify(i).replace(/'/g,"\\'")})'> + Add</button></div>`).join('');
+  c.innerHTML=filtered.map(i=>{
+    const isCustom=i.id&&typeof i.id==='string'&&i.id.includes('-');
+    const deleteBtn=isCustom?`<button onclick="deleteCustomPGItem('${i.id}')" style="background:#fee2e2;border:none;border-radius:6px;padding:5px 8px;cursor:pointer;color:#ef4444;font-size:12px" title="Delete">🗑</button>`:'';
+    const editBtn=isCustom?`<button onclick="editCustomPGItem('${i.id}')" style="background:#e8f4fd;border:none;border-radius:6px;padding:5px 8px;cursor:pointer;color:#1a5fa8;font-size:12px" title="Edit">✏️</button>`:'';
+    const customBadge=isCustom?'<span style="font-size:9px;background:#e8f4fd;color:#1a5fa8;border-radius:4px;padding:1px 5px;margin-left:5px;font-weight:600">CUSTOM</span>':'';
+    return `<div class="pg-item"><div class="pg-item-info"><div class="pg-item-name">${i.name}${customBadge}</div><div style="font-size:11px;color:#64748b;margin-top:2px"><span class="cat-dot" style="background:${CAT_COLORS[i.cat]||'#64748b'}"></span>${i.cat}</div></div><div class="pg-item-price">$${i.price.toFixed(2)}</div><button class="pg-add" onclick='addFromPG(${JSON.stringify(i).replace(/'/g,"\'")})'> + Add</button>${editBtn}${deleteBtn}</div>`;
+  }).join('');
 }
 
 function renderItems(){
@@ -6338,6 +6344,29 @@ function showDiagWithDiagram(equipType){
     </div>`;
 }
 
+
+
+async function editCustomPGItem(id){
+  const item=customPG.find(i=>i.id===id);
+  if(!item)return;
+  const newName=prompt('Edit item name:',item.name);
+  if(!newName||!newName.trim())return;
+  const newPrice=parseFloat(prompt('Edit price:',item.price));
+  if(isNaN(newPrice))return;
+  setSyncStatus('syncing');
+  try{
+    await sb.from('price_guide').update({name:newName.trim(),price:newPrice}).eq('id',id);
+    item.name=newName.trim();
+    item.price=newPrice;
+    sv('kpc_custom_pg',customPG);
+    setSyncStatus('ok');
+    renderPG();
+    toast('Item updated! ✅');
+  }catch(e){
+    setSyncStatus('error');
+    toast('Update failed: '+e.message);
+  }
+}
 
 async function deleteCustomPGItem(id){
   if(!confirm('Remove this item from the price guide?'))return;
