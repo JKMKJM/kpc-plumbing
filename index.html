@@ -2172,12 +2172,12 @@ async function saveWO(){
   setSyncStatus('syncing');
   const data=getWOForm();
 
-  // Strip large photo data to prevent payload too large errors
-  // Photos are stored locally only for now
   const saveData={...data};
-  if(saveData.wo_photos&&saveData.wo_photos.length>0){
-    // Only save photo count, not actual data
-    saveData.wo_photos=[];
+  // Save only uploaded photo URLs (not base64 local previews)
+  if(saveData.wo_photos){
+    saveData.wo_photos=woPhotos
+      .filter(p=>p.url&&p.url.startsWith('http'))
+      .map(p=>({url:p.url,path:p.path}));
   }
 
   // Also check if tech_signature or supervisor_signature are too large
@@ -2451,6 +2451,12 @@ function loadWO(id){
   woItems=(wo.parts||[]).map(p=>({...p,id:Date.now()+Math.random()}));
   techSigData=wo.tech_signature||'';
   supSigData=wo.supervisor_signature||'';
+  // ---- Always reset photos first then load this WO's photos ----
+  woPhotos=[];
+  woPhotos=(wo.wo_photos||[]).map(p=>{
+    if(typeof p==='string')return{url:p,path:'',localSrc:p,uploading:false};
+    return{url:p.url||'',path:p.path||'',localSrc:p.url||'',uploading:false};
+  }).filter(p=>p.url);
   // Show signatures
   const techPrev=document.getElementById('tech-sig-preview');
   const supPrev=document.getElementById('sup-sig-preview');
@@ -2459,7 +2465,9 @@ function loadWO(id){
   if(supSigData&&supPrev){supPrev.src=supSigData;supPrev.style.display='block';document.getElementById('sup-sig-placeholder').style.display='none';}
   else{if(supPrev)supPrev.style.display='none';document.getElementById('sup-sig-placeholder').style.display='flex';}
   renderWOItems();
+  renderWOPhotos();
   showTab('workorder');
+  setTimeout(()=>{refreshPhoneLinks();refreshAddrLinks();},100);
   toast('Work order loaded');
 }
 
@@ -3333,22 +3341,63 @@ setInterval(scheduleReminders,60000);
 requestNotificationPermission();
 
 // Check for missed clock-out from previous day
-function checkMissedClockOut(){
+async function checkMissedClockOut(){
+  const tech=document.getElementById('ts-tech-select').value;
+  if(!tech)return;
   const today=new Date().toISOString().split('T')[0];
-  const yesterday=new Date(Date.now()-86400000).toISOString().split('T')[0];
-  const yesterdayEntries=timeEntries.filter(e=>
-    e.entry_date===yesterday&&e.clock_in&&!e.clock_out&&e.technician===currentTech
-  );
-  if(yesterdayEntries.length>0){
-    toast('⚠️ You forgot to clock out yesterday!');
-    // Highlight in red
-    setTimeout(()=>{
+
+  try{
+    // Check Supabase for any open entries from BEFORE today
+    const{data}=await sb.from('time_entries')
+      .select('*')
+      .eq('technician',tech)
+      .lt('entry_date',today)
+      .is('clock_out',null);
+
+    if(data&&data.length>0){
       const banner=document.getElementById('missed-clockout-banner');
       if(banner){
         banner.style.display='block';
-        banner.innerHTML=`⚠️ You have ${yesterdayEntries.length} missing clock-out from ${yesterday}. <button onclick="showTab('timesheet')" style="background:white;border:1px solid #dc2626;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:12px;color:#dc2626;font-family:inherit">Fix it</button>`;
+        banner.innerHTML=`⚠️ You have ${data.length} missing clock-out${data.length>1?'s':''} from previous day${data.length>1?'s':''}!
+          <div style="margin-top:8px;display:grid;gap:6px">
+            ${data.map(e=>`
+              <div style="display:flex;justify-content:space-between;align-items:center;background:white;border-radius:6px;padding:6px 10px">
+                <span style="font-size:12px">${e.entry_date} — ${e.job_description||'Unknown job'} (clocked in ${formatTime(e.clock_in)||'unknown time'})</span>
+                <button onclick="fixMissedClockOut('${e.id}','${e.entry_date}')" style="background:#dc2626;color:white;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;white-space:nowrap;margin-left:8px">Fix ✏️</button>
+              </div>`).join('')}
+          </div>`;
       }
-    },500);
+    }
+  }catch(e){console.error('Check missed clock-out error:',e);}
+}
+
+async function fixMissedClockOut(entryId, entryDate){
+  const endTime=prompt('Enter clock-out time for '+entryDate+' (HH:MM format, e.g. 17:00):');
+  if(!endTime||!/^\d{2}:\d{2}$/.test(endTime)){
+    toast('Please enter time in HH:MM format');
+    return;
+  }
+  setSyncStatus('syncing');
+  try{
+    // Get the entry
+    const{data:entry}=await sb.from('time_entries').select('*').eq('id',entryId).single();
+    if(!entry)throw new Error('Entry not found');
+
+    const hours=calcHours(entry.clock_in,endTime);
+    await sb.from('time_entries').update({
+      clock_out:endTime,
+      hours_regular:hours,
+      total_hours:hours
+    }).eq('id',entryId);
+
+    setSyncStatus('ok');
+    toast('Clock-out fixed! ✅');
+    // Hide banner and refresh
+    document.getElementById('missed-clockout-banner').style.display='none';
+    await fetchTimeEntries();
+  }catch(e){
+    setSyncStatus('error');
+    toast('Fix failed: '+e.message);
   }
 }
 
@@ -3375,37 +3424,44 @@ async function loadTimesheet(){
 
 async function restoreClockState(){
   const tech=document.getElementById('ts-tech-select').value;
-  const date=document.getElementById('ts-date').value;
-  if(!tech||!date)return;
+  const today=new Date().toISOString().split('T')[0];
+  const date=document.getElementById('ts-date').value||today;
+  if(!tech)return;
 
-  // First check localStorage
-  let savedClockIn=localStorage.getItem('kpc_clock_in_'+tech+'_'+date);
-  let savedJob=localStorage.getItem('kpc_clock_job_'+tech+'_'+date);
+  // Only restore if date is TODAY — don't show old clock-ins from previous days
+  if(date!==today){
+    // Make sure clock-out button is hidden for non-today dates
+    document.getElementById('clock-in-btn').style.display='flex';
+    document.getElementById('clock-out-btn').style.display='none';
+    document.getElementById('ts-clock-status').textContent='Select a job above then clock in';
+    document.getElementById('ts-clock-status').style.color='#64748b';
+    return;
+  }
 
-  // Also check Supabase for open entries (persists across browser restarts)
-  if(!savedClockIn){
-    try{
-      const{data}=await sb.from('time_entries')
-        .select('*')
-        .eq('technician',tech)
-        .eq('entry_date',date)
-        .is('clock_out',null)
-        .limit(1);
-      if(data&&data.length>0){
-        savedClockIn=data[0].clock_in;
-        savedJob=data[0].job_description;
-        // Restore to localStorage too
-        if(savedClockIn)localStorage.setItem('kpc_clock_in_'+tech+'_'+date,savedClockIn);
-        if(savedJob)localStorage.setItem('kpc_clock_job_'+tech+'_'+date,savedJob);
-      }
-    }catch(e){console.error('Restore clock state error:',e);}
+  // Check Supabase for open entries TODAY only
+  let savedClockIn=null;
+  let savedJob=null;
+  try{
+    const{data}=await sb.from('time_entries')
+      .select('*')
+      .eq('technician',tech)
+      .eq('entry_date',today)
+      .is('clock_out',null)
+      .limit(1);
+    if(data&&data.length>0){
+      savedClockIn=data[0].clock_in;
+      savedJob=data[0].job_description;
+    }
+  }catch(e){
+    // Fall back to localStorage
+    savedClockIn=localStorage.getItem('kpc_clock_in_'+tech+'_'+today);
+    savedJob=localStorage.getItem('kpc_clock_job_'+tech+'_'+today);
   }
 
   if(savedClockIn){
     document.getElementById('ts-clock-in').value=savedClockIn;
     if(savedJob){
       document.getElementById('ts-job-desc').value=savedJob;
-      // Enable clock in button so it can be shown
       const btn=document.getElementById('clock-in-btn');
       if(btn){btn.disabled=false;btn.style.background='#0d9e6e';}
     }
@@ -3413,6 +3469,12 @@ async function restoreClockState(){
     document.getElementById('clock-out-btn').style.display='flex';
     document.getElementById('ts-clock-status').textContent='🟢 Clocked in at '+formatTime(savedClockIn)+(savedJob?' — '+savedJob:'');
     document.getElementById('ts-clock-status').style.color='#0d9e6e';
+  } else {
+    // Not clocked in — reset to default state
+    document.getElementById('clock-in-btn').style.display='flex';
+    document.getElementById('clock-out-btn').style.display='none';
+    document.getElementById('ts-clock-status').textContent='Select a job above then clock in';
+    document.getElementById('ts-clock-status').style.color='#64748b';
   }
 }
 
@@ -3562,17 +3624,59 @@ async function clockOut(){
   // Auto-calculate hours
   autoCalcHours();
 
-  // Update the open Supabase record with clock_out time then save properly
+  // Delete ALL open entries for this tech/date from Supabase
   try{
-    await sb.from('time_entries').delete()
+    const{error}=await sb.from('time_entries')
+      .delete()
       .eq('technician',tech)
       .eq('entry_date',date)
       .is('clock_out',null);
-  }catch(e){}
-  // AUTO-SAVE — no extra step needed
+    if(error)console.error('Delete open entry error:',error);
+  }catch(e){console.error('Delete error:',e);}
+
+  // Also clear localStorage clock-in keys for ALL dates for this tech
+  // (in case of stale entries from previous days)
+  for(let i=0;i<localStorage.length;i++){
+    const key=localStorage.key(i);
+    if(key&&key.startsWith('kpc_clock_in_'+tech+'_')){
+      localStorage.removeItem(key);
+      i--;
+    }
+  }
+  for(let i=0;i<localStorage.length;i++){
+    const key=localStorage.key(i);
+    if(key&&key.startsWith('kpc_clock_job_'+tech+'_')){
+      localStorage.removeItem(key);
+      i--;
+    }
+  }
+
+  // AUTO-SAVE the complete entry
   await saveTimeEntry(true);
-  document.getElementById('ts-clock-status').textContent='✅ Clocked out at '+formatTime(timeStr)+' — Entry saved automatically!';
+  document.getElementById('ts-clock-status').textContent='✅ Clocked out at '+formatTime(timeStr)+' — Entry saved!';
   document.getElementById('ts-clock-status').style.color='#0d9e6e';
+
+  // Reset form for next job — clear times and job so they pick fresh
+  setTimeout(()=>{
+    document.getElementById('ts-clock-in').value='';
+    document.getElementById('ts-clock-out').value='';
+    document.getElementById('ts-reg-hours').value='';
+    document.getElementById('ts-ot-hours').value='';
+    document.getElementById('ts-drive-hours').value='';
+    document.getElementById('ts-shop-hours').value='';
+    document.getElementById('ts-job-desc').value='';
+    document.getElementById('ts-job-select').value='';
+    document.getElementById('ts-wo-num').value='';
+    document.getElementById('ts-notes').value='';
+    // Disable clock in until they pick a job
+    document.getElementById('clock-in-btn').disabled=true;
+    document.getElementById('clock-in-btn').style.background='#94a3b8';
+    document.getElementById('ts-clock-status').textContent='Ready for next job — select a job to clock in again';
+    document.getElementById('ts-clock-status').style.color='#64748b';
+    document.getElementById('ts-save-prompt').style.display='none';
+    // Refresh entries list
+    fetchTimeEntries();
+  },2000);
 }
 
 function autoCalcHours(){
@@ -3689,6 +3793,7 @@ function renderWeekSummary(){
   // Auto-calc overtime: anything over 40 reg hours
   let reg=totals.reg;
   let ot=totals.ot;
+  // Add any manually flagged OT hours too
   if(reg>40){ot+=reg-40;reg=40;}
 
   document.getElementById('ts-summary').innerHTML=`
