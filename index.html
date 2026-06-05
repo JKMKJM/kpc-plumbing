@@ -1193,6 +1193,10 @@ function closeImgModal(){document.getElementById('img-modal').classList.remove('
 
 // DOC TYPE
 function setDocType(type){
+  // If switching type on a blank form, treat as new doc
+  if(type!==docType&&!document.getElementById('client-name').value&&!document.getElementById('inv-num').value){
+    currentDocId=null;
+  }
   docType=type;
   const isEst=type==='estimate';
   document.getElementById('btn-inv-type').className='doc-type-btn'+(isEst?'':' active-inv');
@@ -1245,7 +1249,7 @@ function showTab(t){
   ['doc','priceguide','saved','customers','workorder','calendar','timesheet','schedule','settings','diagnostic'].forEach(id=>document.getElementById('tab-'+id).style.display=id===t?'block':'none');
   document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',['doc','priceguide','saved','customers','workorder','calendar','timesheet','schedule','settings','diagnostic'][i]===t));
   if(t==='saved')loadAndRenderSaved();
-  if(t==='priceguide')renderPG();
+  if(t==='priceguide')loadCustomPG();
   if(t==='customers')loadAndRenderCustomers();
   if(t==='calendar'){loadCalendar();}
   if(t==='timesheet'){loadTimesheet();}
@@ -1342,14 +1346,43 @@ const BASE_PG=[
 function addItem(desc='',qty=1,price=0){const id=Date.now()+Math.random();items.push({id,desc,qty,price});renderItems();}
 function addFromPG(it){addItem(it.name,1,it.price);showTab('doc');toast(it.name+' added');}
 
-function addCustomItem(){
+async function addCustomItem(){
   const name=document.getElementById('pg-name').value.trim();
   const price=parseFloat(document.getElementById('pg-price').value)||0;
+  const cat=document.getElementById('pg-cat').value;
   if(!name){toast('Enter an item name');return;}
-  customPG.push({id:Date.now(),name,cat:document.getElementById('pg-cat').value,price});
-  sv('kpc_custom_pg',customPG);
-  document.getElementById('pg-name').value='';document.getElementById('pg-price').value='';
-  renderPG();toast('Saved to Price Guide!');
+  setSyncStatus('syncing');
+  try{
+    const{data,error}=await sb.from('price_guide').insert({name,cat,price}).select();
+    if(error)throw error;
+    const newItem={id:data[0].id,name,cat,price};
+    customPG.push(newItem);
+    sv('kpc_custom_pg',customPG);
+    document.getElementById('pg-name').value='';
+    document.getElementById('pg-price').value='';
+    setSyncStatus('ok');
+    renderPG();
+    toast('Saved to Price Guide! ✅');
+  }catch(e){
+    setSyncStatus('error');
+    toast('Save failed: '+e.message);
+    console.error(e);
+  }
+}
+
+async function loadCustomPG(){
+  try{
+    const{data,error}=await sb.from('price_guide').select('*').order('created_at');
+    if(error)throw error;
+    customPG=data||[];
+    // Also update localStorage
+    sv('kpc_custom_pg',customPG);
+    renderPG();
+  }catch(e){
+    // Fall back to localStorage if cloud fails
+    console.error('Load price guide error:',e);
+    renderPG();
+  }
 }
 
 function renderPG(){
@@ -1417,9 +1450,17 @@ function getForm(){
 async function saveDoc(){
   setSyncStatus('syncing');
   const data=getForm();
-  // Remove any fields that might not exist in the docs table
   try{
     let result;
+    if(currentDocId){
+      // Verify this currentDocId still matches what we're editing
+      // If inv_num changed, it's a new document
+      const{data:existing}=await sb.from('docs').select('inv_num').eq('id',currentDocId).single();
+      if(existing&&existing.inv_num!==data.inv_num){
+        // Different invoice number = new document, not an update
+        currentDocId=null;
+      }
+    }
     if(currentDocId){
       result=await sb.from('docs').update(data).eq('id',currentDocId).select();
     } else {
@@ -6295,6 +6336,23 @@ function showDiagWithDiagram(equipType){
       <button onclick="startDiag('${equipType}')" style="background:${color};color:white;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🔍 Diagnose Problem</button>
       <button onclick="showDiagHome()" style="background:#f1f5f9;color:#475569;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">← Back</button>
     </div>`;
+}
+
+
+async function deleteCustomPGItem(id){
+  if(!confirm('Remove this item from the price guide?'))return;
+  setSyncStatus('syncing');
+  try{
+    await sb.from('price_guide').delete().eq('id',id);
+    customPG=customPG.filter(i=>i.id!==id);
+    sv('kpc_custom_pg',customPG);
+    setSyncStatus('ok');
+    renderPG();
+    toast('Item removed from price guide');
+  }catch(e){
+    setSyncStatus('error');
+    toast('Delete failed: '+e.message);
+  }
 }
 
 </script>
