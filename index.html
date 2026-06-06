@@ -375,6 +375,18 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
   <!-- SAVED TAB -->
   <div id="tab-saved" class="content" style="display:none">
     <div class="search-box"><input type="text" id="saved-search" placeholder="Search by client, invoice #, technician..." oninput="filterSaved()"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <button onclick="exportQBIIF()" style="background:#2CA01C;color:white;border:none;border-radius:10px;padding:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:5px">📊 Export to QuickBooks</button>
+      <button onclick="exportInvoicesCSV()" style="background:#1a5fa8;color:white;border:none;border-radius:10px;padding:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:5px">📋 Export CSV</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
+      <button id="select-mode-btn" onclick="toggleSelectMode()" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:8px;padding:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">☑ Select</button>
+      <button onclick="selectAllDocs()" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:8px;padding:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">✅ All</button>
+      <button onclick="clearSelection()" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:8px;padding:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">❌ Clear</button>
+    </div>
+    <div id="selection-count-bar" style="display:none;background:#e8f4fd;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:12px;font-weight:600;color:#1a5fa8;text-align:center">
+      0 items selected
+    </div>
     <div class="filters" id="pay-filter-row">
       <span class="flt on" onclick="setPayFilter('all')">All</span>
       <span class="flt" onclick="setPayFilter('unpaid')">⏳ Unpaid</span>
@@ -1501,12 +1513,67 @@ function filterSaved(){
   renderSavedList(filtered);
 }
 
+let selectMode=false;
+let selectedDocs=new Set();
+
+function toggleSelectMode(){
+  selectMode=!selectMode;
+  const btn=document.getElementById('select-mode-btn');
+  if(btn){
+    btn.style.background=selectMode?'#1a5fa8':'#f1f5f9';
+    btn.style.color=selectMode?'white':'#475569';
+    btn.textContent=selectMode?'☑ Selecting':'☑ Select';
+  }
+  if(!selectMode){selectedDocs.clear();updateSelectionBar();}
+  filterSaved();
+}
+
+function selectAllDocs(){
+  if(!selectMode)toggleSelectMode();
+  allDocs.forEach(d=>selectedDocs.add(d.id));
+  updateSelectionBar();
+  filterSaved();
+}
+
+function clearSelection(){
+  selectedDocs.clear();
+  updateSelectionBar();
+  filterSaved();
+}
+
+function toggleDocSelect(id){
+  if(selectedDocs.has(id))selectedDocs.delete(id);
+  else selectedDocs.add(id);
+  updateSelectionBar();
+  filterSaved();
+}
+
+function updateSelectionBar(){
+  const bar=document.getElementById('selection-count-bar');
+  if(!bar)return;
+  if(selectedDocs.size>0){
+    bar.style.display='block';
+    bar.textContent=selectedDocs.size+' item'+(selectedDocs.size>1?'s':'')+' selected — tap Export to QuickBooks or CSV';
+  } else {
+    bar.style.display='none';
+  }
+}
+
+function getDocsToExport(){
+  // If items selected, use those. Otherwise use all.
+  if(selectedDocs.size>0){
+    return allDocs.filter(d=>selectedDocs.has(d.id));
+  }
+  return allDocs;
+}
+
 function renderSavedList(docs){
   const c=document.getElementById('saved-list');
   if(!docs.length){c.innerHTML='<div class="empty-state"><div class="icon">🗂</div><p>No documents found.</p></div>';return;}
   c.innerHTML=docs.map(doc=>`
-    <div class="saved-card">
-      <div style="flex:1;min-width:0;cursor:pointer" onclick="loadDoc('${doc.id}')">
+    <div class="saved-card" style="${selectedDocs.has(doc.id)?'background:#e8f4fd;border-color:#1a5fa8;border:1.5px solid #1a5fa8;':''}">
+      ${selectMode?`<div style="padding:4px 8px 4px 0;display:flex;align-items:center"><input type="checkbox" ${selectedDocs.has(doc.id)?'checked':''} onchange="toggleDocSelect('${doc.id}')" style="width:18px;height:18px;cursor:pointer;accent-color:#1a5fa8"></div>`:''}
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="${selectMode?`toggleDocSelect('${doc.id}')`:`loadDoc('${doc.id}')`}">
         <div class="saved-name">
           ${doc.client_name||'No client'} — ${doc.inv_num||''}
           <span class="badge ${doc.doc_type==='estimate'?'badge-est':'badge-inv'}">${doc.doc_type==='estimate'?'EST':'INV'}</span>
@@ -6458,6 +6525,170 @@ async function deleteCustomPGItem(id){
     setSyncStatus('error');
     toast('Delete failed: '+e.message);
   }
+}
+
+
+// ============================================================
+// QUICKBOOKS EXPORT MODULE
+// ============================================================
+
+function exportQBIIF(){
+  if(!allDocs.length){
+    toast('Load your saved invoices first');
+    return;
+  }
+
+  const docsToExport=getDocsToExport();
+  const invoices=docsToExport.filter(d=>d.doc_type==='invoice');
+  const estimates=docsToExport.filter(d=>d.doc_type==='estimate');
+  const allExport=[...invoices,...estimates];
+  if(!allExport.length){
+    toast('No invoices or estimates found to export');
+    return;
+  }
+
+  let iif='';
+
+  // ---- CUSTOMER LIST ----
+  iif+='!CUST	NAME	COMPANY	ADDR1	EMAIL	PHONE1\n';
+  const customers={};
+  invoices.forEach(inv=>{
+    const name=(inv.client_name||'').trim();
+    if(name&&!customers[name]){
+      customers[name]=true;
+      iif+=`CUST	${name}	${name}	${(inv.client_addr||'').replace(/\n/g,' ')}	${inv.client_email||''}	${inv.client_phone||''}\n`;
+    }
+  });
+
+  // ---- INVOICE HEADERS ----
+  iif+='\n!TRNS	TRNSTYPE	DATE	ACCNT	NAME	AMOUNT	DOCNUM	MEMO\n';
+  iif+='!SPL	TRNSTYPE	DATE	ACCNT	NAME	AMOUNT	INVITEM	QTY	PRICE	MEMO\n';
+  iif+='!ENDTRNS\n';
+
+  // First add customers from estimates too
+  allExport.forEach(inv=>{
+    const name=(inv.client_name||'').trim();
+    if(name&&!customers[name]){
+      customers[name]=true;
+      iif+=`CUST	${name}	${name}	${(inv.client_addr||'').replace(/\n/g,' ')}	${inv.client_email||''}	${inv.client_phone||''}\n`;
+    }
+  });
+
+  allExport.forEach(inv=>{
+    const isEstimate=inv.doc_type==='estimate';
+    const date=formatQBDate(inv.inv_date||inv.created_at);
+    const name=(inv.client_name||'').trim()||'Customer';
+    const total=inv.total||0;
+    const docNum=inv.inv_num||'';
+    const memo=(inv.notes||'').replace(/\t/g,' ').replace(/\n/g,' ');
+    // QuickBooks uses ESTIMATE for estimates, INVOICE for invoices
+    const trnsType=isEstimate?'ESTIMATE':'INVOICE';
+    const acct=isEstimate?'Estimates':'Accounts Receivable';
+
+    // Transaction header
+    const fullMemo=(docNum?'KPC Ref: '+docNum+(memo?' | '+memo:''):memo).substring(0,100);
+    iif+=`TRNS	${trnsType}	${date}	${acct}	${job}	${total.toFixed(2)}		${fullMemo}\n`;
+
+    // Line items
+    const items=inv.items||[];
+    if(items.length>0){
+      items.forEach(item=>{
+        if(item.desc&&(item.price||0)>0){
+          const lineAmt=((item.qty||1)*(item.price||0));
+          const desc=(item.desc||'').replace(/\t/g,' ').replace(/\n/g,' ');
+          iif+=`SPL	${trnsType}	${date}	Plumbing Income	${name}	-${lineAmt.toFixed(2)}	${desc}	${item.qty||1}	${(item.price||0).toFixed(2)}	${desc}\n`;
+        }
+      });
+    } else {
+      iif+=`SPL	${trnsType}	${date}	Plumbing Income	${name}	-${total.toFixed(2)}	Plumbing Services	1	${total.toFixed(2)}	Plumbing Services\n`;
+    }
+
+    // Payment line only for paid invoices (not estimates)
+    if(!isEstimate&&inv.payment_status==='paid'&&inv.payment_method){
+      iif+=`SPL	INVOICE	${date}	${getQBPaymentAccount(inv.payment_method)}	${name}	${total.toFixed(2)}	Payment	1	${total.toFixed(2)}	${inv.payment_method} payment\n`;
+    }
+
+    iif+='ENDTRNS\n';
+  });
+
+  // Download the IIF file
+  const blob=new Blob([iif],{type:'text/plain'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  const dateStr=new Date().toISOString().split('T')[0];
+  a.download=`KPC-Plumbing-QB-${dateStr}.iif`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${invoices.length} invoices + ${estimates.length} estimates to QuickBooks! ✅`);
+}
+
+function formatQBDate(dateStr){
+  if(!dateStr){
+    const n=new Date();
+    return(n.getMonth()+1).toString().padStart(2,'0')+'/'+n.getDate().toString().padStart(2,'0')+'/'+n.getFullYear().toString().slice(2);
+  }
+  // Convert YYYY-MM-DD to MM/DD/YY for QuickBooks Desktop
+  const parts=dateStr.split('T')[0].split('-');
+  if(parts.length===3){
+    return parts[1]+'/'+parts[2]+'/'+parts[0].slice(2);
+  }
+  const d=new Date(dateStr+'T12:00:00');
+  return(d.getMonth()+1).toString().padStart(2,'0')+'/'+d.getDate().toString().padStart(2,'0')+'/'+d.getFullYear().toString().slice(2);
+}
+
+function getQBPaymentAccount(method){
+  const map={
+    cash:'Undeposited Funds',
+    check:'Undeposited Funds',
+    card:'Undeposited Funds',
+    venmo:'Undeposited Funds',
+    zelle:'Undeposited Funds'
+  };
+  return map[(method||'').toLowerCase()]||'Undeposited Funds';
+}
+
+function exportInvoicesCSV(){
+  if(!allDocs.length){
+    toast('Load your saved invoices first');
+    return;
+  }
+  const docsForCSV=getDocsToExport().filter(d=>d.doc_type==='invoice'||d.doc_type==='estimate');
+  const invoices=docsForCSV;
+  if(!invoices.length){toast('No invoices or estimates found');return;}
+
+  const headers=['Type','Invoice/Estimate #','Date','Due Date','Customer','Address','Email','Phone','Technician','Job #','Total','Subtotal','Tax %','Payment Status','Payment Method','Amount Paid','Balance Due','Notes'];
+  const rows=invoices.map(inv=>[
+    (inv.doc_type||'invoice').toUpperCase(),
+    inv.inv_num||'',
+    inv.inv_date||'',
+    inv.due_date||'',
+    inv.client_name||'',
+    (inv.client_addr||'').replace(/\n/g,' '),
+    inv.client_email||'',
+    inv.client_phone||'',
+    inv.technician||'',
+    inv.job_num||'',
+    (inv.total||0).toFixed(2),
+    inv.items?(inv.items.reduce((s,i)=>s+(i.qty||0)*(i.price||0),0)).toFixed(2):'0.00',
+    inv.tax_rate||0,
+    inv.payment_status||'unpaid',
+    inv.payment_method||'',
+    (inv.amount_paid||0).toFixed(2),
+    (inv.balance_due||0).toFixed(2),
+    (inv.notes||'').replace(/,/g,';').replace(/\n/g,' ')
+  ]);
+
+  const csv=[headers,...rows].map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  const dateStr=new Date().toISOString().split('T')[0];
+  a.download=`KPC-Plumbing-Invoices-${dateStr}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${invoices.length} records to CSV! ✅`);
 }
 
 </script>
