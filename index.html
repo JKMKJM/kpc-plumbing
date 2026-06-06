@@ -2448,7 +2448,7 @@ function renderWOList(wos){
     </div>`).join('');
 }
 
-function loadWO(id){
+async function loadWO(id){
   const wo=allWOs.find(w=>w.id===id);if(!wo)return;
   currentWOId=id;
   const fields={
@@ -2474,10 +2474,36 @@ function loadWO(id){
   supSigData=wo.supervisor_signature||'';
   // ---- Always reset photos first then load this WO's photos ----
   woPhotos=[];
-  woPhotos=(wo.wo_photos||[]).map(p=>{
-    if(typeof p==='string')return{url:p,path:'',localSrc:p,uploading:false};
-    return{url:p.url||'',path:p.path||'',localSrc:p.url||'',uploading:false};
-  }).filter(p=>p.url);
+  if(wo.wo_photos&&wo.wo_photos.length>0){
+    woPhotos=wo.wo_photos.map(p=>{
+      if(typeof p==='string')return{url:p,path:'',localSrc:p,uploading:false};
+      // Fix double bucket name in URL if present
+      let url=p.url||'';
+      if(url.includes('/wo-photos/wo-photos/'))url=url.replace('/wo-photos/wo-photos/','/wo-photos/');
+      // Fix path - remove leading "wo-photos/" if present
+      let path=(p.path||'').replace(/^wo-photos\//, '');
+      return{url,path,localSrc:url,uploading:false};
+    }).filter(p=>p.url);
+  }
+  // If no photos in record, try loading from Supabase Storage by WO number
+  if(woPhotos.length===0&&wo.wo_num){
+    try{
+      const{data:files}=await sb.storage.from('wo-photos').list(wo.wo_num,{limit:50});
+      if(files&&files.length>0){
+        woPhotos=files.filter(f=>f.name&&!f.name.startsWith('.')).map(f=>{
+          const path='wo-photos/'+wo.wo_num+'/'+f.name;
+          const{data:urlData}=sb.storage.from('wo-photos').getPublicUrl(path);
+          return{url:urlData.publicUrl,path,localSrc:urlData.publicUrl,uploading:false};
+        });
+        // Auto-save the recovered URLs back to the work order
+        if(woPhotos.length>0&&currentWOId){
+          const photoUrls=woPhotos.map(p=>({url:p.url,path:p.path}));
+          await sb.from('work_orders').update({wo_photos:photoUrls}).eq('id',currentWOId);
+          toast('📷 '+woPhotos.length+' photo'+(woPhotos.length>1?'s':'')+' recovered!');
+        }
+      }
+    }catch(e){console.error('Photo recovery error:',e);}
+  }
   // Show signatures
   const techPrev=document.getElementById('tech-sig-preview');
   const supPrev=document.getElementById('sup-sig-preview');
@@ -2804,7 +2830,7 @@ async function uploadWOPhoto(file,tempId){
     const woNum=document.getElementById('wo-num').value||'unknown';
     const timestamp=Date.now();
     const ext=file.name.split('.').pop()||'jpg';
-    const path=`wo-photos/${woNum}/${timestamp}.${ext}`;
+    const path=`${woNum}/${timestamp}.${ext}`;
     const{data,error}=await sb.storage.from('wo-photos').upload(path,file,{
       contentType:file.type||'image/jpeg',
       upsert:true
@@ -2852,7 +2878,7 @@ function renderWOPhotos(){
   woPhotos.forEach((p,i)=>{
     const src=p.url||p.localSrc||'';
     const overlay=p.uploading?'<div style="position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;border-radius:8px;color:white;font-size:11px">Uploading...</div>':'';
-    html+=`<div class="photo-thumb" onclick="openImgModal('wo_${i}')"><img src="${src}" alt="Job photo">${overlay}<button class="photo-del" onclick="event.stopPropagation();delWOPhoto(${i})">✕</button></div>`;
+    html+=`<div class="photo-thumb" onclick="openImgModal('wo_${i}')"><img src="${src}" alt="Job photo" style="width:100%;height:100%;object-fit:cover">${overlay}<button class="photo-del" onclick="event.stopPropagation();delWOPhoto(${i})">✕</button></div>`;
   });
   html+=`<div class="photo-add" onclick="document.getElementById('wo-photo-file').click()"><span style="font-size:24px">📷</span><span>Add photo</span></div>`;
   grid.innerHTML=html;
