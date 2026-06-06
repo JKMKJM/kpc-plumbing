@@ -6553,20 +6553,22 @@ async function exportQBIIF(){
   // Warranty jobs (have SWO in PO# or Job#) → Choice Home Warranty:SWO#
   // Regular jobs → CustomerName:InvNum
   function getQBNames(doc){
-    const poNum=(doc.po_num||'').replace(/^SWO-?/i,'').trim();
-    const jobNum=(doc.job_num||'').replace(/^(WO|SWO)-?/i,'').trim();
-    const swoNum=poNum.length>4?poNum:(jobNum.length>5?jobNum:'');
-    if(swoNum){
+    // Only treat as warranty job if PO# starts with SWO- and has a long number
+    // Regular WO numbers like WO-008 are NOT warranty jobs
+    const poNum=(doc.po_num||'').trim();
+    const isSWO=poNum.match(/^SWO-?\d{7,}/i);
+    if(isSWO){
+      const swoNum=poNum.replace(/^SWO-?/i,'').trim();
       return{customer:'Choice Home Warranty',job:'Choice Home Warranty:'+swoNum};
     }
     const cust=(doc.client_name||'Customer').trim();
-    return{customer:cust,job:cust+':'+(doc.inv_num||doc.job_num||'JOB')};
+    return{customer:cust,job:cust+':'+(doc.inv_num||'JOB')};
   }
 
   let iif='';
 
   // ---- CUSTOMERS ----
-  iif+='!CUST\tNAME\tEMAIL\tPHONE1\n';
+  iif+='!CUST\tNAME\tFIRSTNAME\tLASTNAME\tEMAIL\tPHONE1\tBADDR1\tBADDR2\tBADDR3\n';
   const addedCusts=new Set();
 
   // Add Choice Home Warranty if any warranty jobs
@@ -6575,29 +6577,46 @@ async function exportQBIIF(){
     const jn=(d.job_num||'').replace(/^(WO|SWO)-?/i,'').trim();
     return po.length>4||jn.length>5;
   })){
-    iif+='CUST\tChoice Home Warranty\t\t\t\t\n';
+    iif+='CUST\tChoice Home Warranty\t\t\t\t\t\t\t\n';
     addedCusts.add('Choice Home Warranty');
   }
 
-  // Add regular customers
+  // Add all customers including homeowners for warranty jobs
   allExport.forEach(doc=>{
-    const{customer}=getQBNames(doc);
-    if(customer!=='Choice Home Warranty'&&!addedCusts.has(customer)){
-      addedCusts.add(customer);
-      const addrLines=(doc.client_addr||'').split('\n');
-      iif+=`CUST	${customer}	${addrLines[0]||''}	${addrLines[1]||''}	${doc.client_email||''}	${doc.client_phone||''}\n`;
-    }
-  });
-
-  // ---- JOBS (sub-customers) ----
-  iif+='!CUST\tNAME\tEMAIL\tPHONE1\tCUSTOMERISJOB\tPARENT\n';
-  const addedJobs=new Set();
-  allExport.forEach(doc=>{
-    const{customer,job}=getQBNames(doc);
-    if(!addedJobs.has(job)){
-      addedJobs.add(job);
-      const isWarranty=customer==='Choice Home Warranty';
-      iif+=`CUST	${job}	${addr1}	${addr2}	${doc.client_email||''}	${doc.client_phone||''}	Y	${customer}\n`;
+    const clientName=(doc.client_name||'').trim();
+    if(!clientName)return;
+    // Always add the homeowner/client as a customer
+    if(!addedCusts.has(clientName)){
+      addedCusts.add(clientName);
+      const nameParts=clientName.split(' ');
+      const firstName=nameParts[0]||'';
+      const lastName=nameParts.slice(1).join(' ')||'';
+      // Split address into street and city/state/zip
+      const fullAddr=(doc.client_addr||'').replace(/\r/g,'').trim();
+      let addrLine1='';let addrLine2='';
+      if(fullAddr.includes('\n')){
+        const parts=fullAddr.split('\n');
+        addrLine1=parts[0].trim();
+        addrLine2=parts.slice(1).join(' ').trim();
+      } else {
+        // Split at zip code - everything before zip is street, zip onwards is city/state/zip
+        const zipIdx=fullAddr.search(/\d{5}/);
+        if(zipIdx>0){
+          // Find the last space before the zip to get the city start
+          const beforeZip=fullAddr.substring(0,zipIdx).trim();
+          const lastComma=beforeZip.lastIndexOf(',');
+          if(lastComma>0){
+            addrLine1=beforeZip.substring(0,lastComma).trim();
+            addrLine2=beforeZip.substring(lastComma+1).trim()+' '+fullAddr.substring(zipIdx).trim();
+          } else {
+            addrLine1=fullAddr;addrLine2='';
+          }
+        } else {
+          addrLine1=fullAddr;addrLine2='';
+        }
+      }
+      const phone=(doc.client_phone||'').replace(/[^0-9\(\)\-\.\s]/g,'').trim();
+      iif+=`CUST\t${clientName}\t${firstName}\t${lastName}\t${doc.client_email||''}\t${phone}\t${addrLine1}\t${addrLine2}\t\n`;
     }
   });
 
@@ -6612,8 +6631,8 @@ async function exportQBIIF(){
     const{job}=getQBNames(doc);
     const date=formatQBDate(doc.inv_date||doc.created_at);
     const total=doc.total||0;
-    const trnsType=isEst?'ESTIMATE':'INVOICE';
-    const acct=isEst?'Estimates':'Accounts Receivable';
+    const trnsType='INVOICE';
+    const acct='Accounts Receivable';
     const kpcRef=doc.inv_num?'KPC: '+doc.inv_num:'';
     const notes=(doc.notes||'').replace(/\t/g,' ').replace(/\n/g,' ').substring(0,80);
     const memo=(kpcRef+(notes?' | '+notes:'')).substring(0,100);
@@ -6626,11 +6645,11 @@ async function exportQBIIF(){
         if(item.desc&&(item.price||0)>0){
           const amt=((item.qty||1)*(item.price||0));
           const desc=(item.desc||'').replace(/\t/g,' ').replace(/\n/g,' ');
-          iif+=`SPL	${trnsType}	${date}	Plumbing Income	${job}	-${amt.toFixed(2)}	${desc}	${item.qty||1}	${(item.price||0).toFixed(2)}	${desc}\n`;
+          iif+=`SPL\t${trnsType}\t${date}\t\t${job}\t-${amt.toFixed(2)}\t14 Plumbing:CHW Service Call Fee\t${item.qty||1}\t${(item.price||0).toFixed(2)}\t${desc}\n`;
         }
       });
     } else {
-      iif+=`SPL	${trnsType}	${date}	Plumbing Income	${job}	-${total.toFixed(2)}	Plumbing Services	1	${total.toFixed(2)}	\n`;
+      iif+=`SPL\t${trnsType}\t${date}\t\t${job}\t-${total.toFixed(2)}\t14 Plumbing:CHW Service Call Fee\t1\t${total.toFixed(2)}\tPlumbing Services\n`;
     }
 
     if(!isEst&&doc.payment_status==='paid'&&doc.payment_method){
