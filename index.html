@@ -513,6 +513,11 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
 
   <!-- SCHEDULE TAB -->
   <div id="tab-schedule" class="content" style="display:none">
+    <!-- Today's Appointment Reminders -->
+    <div id="today-reminders" style="display:none;background:linear-gradient(135deg,#1a5fa8,#0d3d6e);border-radius:12px;padding:14px;margin-bottom:12px;color:white">
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px">📅 TODAY'S JOBS</div>
+      <div id="today-reminders-list"></div>
+    </div>
     <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:12px;align-items:end">
       <div class="field" style="margin-bottom:0">
         <label style="font-size:12px;font-weight:600;color:#475569;display:block;margin-bottom:4px">Schedule Date</label>
@@ -698,6 +703,16 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
         <div class="field"><label>End Date</label><input type="date" id="wo-end-date"></div>
       </div>
       <div class="field"><label>Work Description / Actions Taken</label><textarea id="wo-work-desc" placeholder="Describe work performed..." style="min-height:90px"></textarea></div>
+
+      <!-- Quick Notes -->
+      <div class="field">
+        <label>Quick Notes / Updates <span style="font-size:10px;color:#94a3b8;font-weight:400">(timestamped)</span></label>
+        <div id="quick-notes-list" style="margin-bottom:6px;display:grid;gap:4px"></div>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="quick-note-input" placeholder="Type a quick update..." style="flex:1;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit" onkeydown="if(event.key==='Enter')addQuickNote()">
+          <button onclick="addQuickNote()" style="background:#1a5fa8;color:white;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;font-weight:600;font-family:inherit">+ Add</button>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -761,6 +776,23 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
     </div>
 
     <div id="wo-error-banner" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:13px;font-weight:600;color:#dc2626"></div>
+
+    <!-- CHW Job Checklist -->
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div class="card-title" style="margin-bottom:0">✅ Job Checklist</div>
+        <span id="checklist-count" style="font-size:11px;color:#64748b">0/7 complete</span>
+      </div>
+      <div id="wo-checklist" style="display:grid;gap:6px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="chk1" onchange="updateChecklist()" style="width:16px;height:16px;accent-color:#0d9e6e"> Photos taken of issue</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="chk2" onchange="updateChecklist()" style="width:16px;height:16px;accent-color:#0d9e6e"> Diagnosis documented</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="chk3" onchange="updateChecklist()" style="width:16px;height:16px;accent-color:#0d9e6e"> Parts listed in work order</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="chk4" onchange="updateChecklist()" style="width:16px;height:16px;accent-color:#0d9e6e"> Customer signature obtained</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="chk5" onchange="updateChecklist()" style="width:16px;height:16px;accent-color:#0d9e6e"> Invoice created</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="chk6" onchange="updateChecklist()" style="width:16px;height:16px;accent-color:#0d9e6e"> Exported to QuickBooks</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="chk7" onchange="updateChecklist()" style="width:16px;height:16px;accent-color:#0d9e6e"> Updated status in Rely</label>
+      </div>
+    </div>
 
     <div class="action-row">
       <button class="btn btn-save" onclick="saveWO()">☁ Save & Sync</button>
@@ -1230,7 +1262,7 @@ function showTab(t){
   if(t==='customers')loadAndRenderCustomers();
   if(t==='calendar'){loadCalendar();}
   if(t==='timesheet'){loadTimesheet();}
-  if(t==='schedule'){loadSchedule();}
+  if(t==='schedule'){loadSchedule();loadTodayReminders();}
   if(t==='settings'){loadSettings();}
   if(t==='diagnostic'){showDiagHome();}
   if(t==='workorder'){loadAndRenderWOs();if(!document.getElementById('wo-num').value){getNextWONumber().then(n=>document.getElementById('wo-num').value=n);}document.getElementById('wo-date').value=document.getElementById('wo-date').value||new Date().toISOString().split('T')[0];}
@@ -2296,7 +2328,7 @@ async function addWOToSchedule(data){
 // ---- New WO ----
 async function newWO(){
   if(!confirm('Start a new work order? Unsaved changes will be lost.'))return;
-  woItems=[];woPhotos=[];techSigData='';supSigData='';currentWOId=null;
+  woItems=[];woPhotos=[];techSigData='';supSigData='';currentWOId=null;quickNotes=[];resetChecklist();
   const ids=['wo-num','wo-date','wo-priority','wo-swo-num','wo-service-fee','wo-appt-date','wo-appt-time','wo-requested-by','wo-department','wo-req-phone','wo-req-email','wo-building','wo-room','wo-floor','wo-address','wo-equip-name','wo-asset-tag','wo-serial','wo-make','wo-model','wo-equip-loc','wo-problem','wo-assigned','wo-start-date','wo-end-date','wo-labor-hrs','wo-work-desc','wo-incomplete-reason','wo-tech-sig-date','wo-supervisor','wo-sup-sig-date'];
   ids.forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   document.getElementById('wo-status').value='incomplete';
@@ -2507,6 +2539,11 @@ async function loadWO(id){
   else{if(techPrev)techPrev.style.display='none';document.getElementById('tech-sig-placeholder').style.display='flex';}
   if(supSigData&&supPrev){supPrev.src=supSigData;supPrev.style.display='block';document.getElementById('sup-sig-placeholder').style.display='none';}
   else{if(supPrev)supPrev.style.display='none';document.getElementById('sup-sig-placeholder').style.display='flex';}
+  // Load checklist and quick notes
+  woChecklist=wo.checklist||{chk1:false,chk2:false,chk3:false,chk4:false,chk5:false,chk6:false,chk7:false};
+  quickNotes=wo.quick_notes||[];
+  loadChecklist(woChecklist);
+  renderQuickNotes();
   renderWOItems();
   renderWOPhotos();
   showTab('workorder');
@@ -6795,6 +6832,378 @@ async function recoverWOPhotos(){
     toast('Recovery failed: '+e.message);
     console.error(e);
   }
+}
+
+
+// === NEW FEATURES ===
+// ============================================================
+// FEATURE: CHW JOB CHECKLIST
+// ============================================================
+let woChecklist={chk1:false,chk2:false,chk3:false,chk4:false,chk5:false,chk6:false,chk7:false};
+
+function updateChecklist(){
+  let done=0;
+  for(let i=1;i<=7;i++){
+    const el=document.getElementById('chk'+i);
+    if(el){woChecklist['chk'+i]=el.checked;if(el.checked)done++;}
+  }
+  const countEl=document.getElementById('checklist-count');
+  if(countEl){
+    countEl.textContent=done+'/7 complete';
+    countEl.style.color=done===7?'#0d9e6e':done>=4?'#f59e0b':'#64748b';
+  }
+}
+
+function loadChecklist(data){
+  if(!data)return;
+  for(let i=1;i<=7;i++){
+    const el=document.getElementById('chk'+i);
+    if(el){el.checked=data['chk'+i]||false;}
+  }
+  updateChecklist();
+}
+
+function resetChecklist(){
+  for(let i=1;i<=7;i++){
+    const el=document.getElementById('chk'+i);
+    if(el)el.checked=false;
+    woChecklist['chk'+i]=false;
+  }
+  updateChecklist();
+}
+
+// ============================================================
+// FEATURE: QUICK NOTES
+// ============================================================
+let quickNotes=[];
+
+function addQuickNote(){
+  const input=document.getElementById('quick-note-input');
+  const text=input?input.value.trim():'';
+  if(!text)return;
+  const note={
+    text,
+    time:new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}),
+    tech:document.getElementById('wo-assigned')?document.getElementById('wo-assigned').value:''
+  };
+  quickNotes.push(note);
+  if(input)input.value='';
+  renderQuickNotes();
+  // Auto-save if WO exists
+  if(currentWOId)autoSaveQuickNotes();
+}
+
+function renderQuickNotes(){
+  const list=document.getElementById('quick-notes-list');
+  if(!list)return;
+  if(!quickNotes.length){list.innerHTML='';return;}
+  list.innerHTML=quickNotes.map((n,i)=>`
+    <div style="background:#f8fafc;border-left:3px solid #1a5fa8;border-radius:0 8px 8px 0;padding:6px 10px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+      <div>
+        <div style="font-size:12px;color:#1a1a1a">${n.text}</div>
+        <div style="font-size:10px;color:#94a3b8;margin-top:2px">${n.time}${n.tech?' · '+n.tech:''}</div>
+      </div>
+      <button onclick="deleteQuickNote(${i})" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;flex-shrink:0">✕</button>
+    </div>`).join('');
+}
+
+function deleteQuickNote(i){
+  quickNotes.splice(i,1);
+  renderQuickNotes();
+  if(currentWOId)autoSaveQuickNotes();
+}
+
+async function autoSaveQuickNotes(){
+  if(!currentWOId)return;
+  try{
+    await sb.from('work_orders').update({quick_notes:quickNotes}).eq('id',currentWOId);
+  }catch(e){console.error('Quick notes save error:',e);}
+}
+
+// ============================================================
+// FEATURE: APPOINTMENT REMINDERS
+// ============================================================
+async function loadTodayReminders(){
+  const today=new Date().toISOString().split('T')[0];
+  try{
+    // Check work orders with today's appointment
+    const{data:wos}=await sb.from('work_orders')
+      .select('wo_num,requested_by,appt_date,appt_time,address,wo_status')
+      .eq('appt_date',today)
+      .neq('wo_status','completed')
+      .order('appt_time');
+
+    // Check schedule entries for today
+    const{data:sched}=await sb.from('schedules')
+      .select('*')
+      .eq('schedule_date',today)
+      .neq('status','completed')
+      .order('start_time');
+
+    const allToday=[
+      ...(wos||[]).map(w=>({
+        title:w.requested_by||'Work Order',
+        sub:w.wo_num+(w.appt_time?' at '+formatTime(w.appt_time):''),
+        addr:w.address||'',
+        type:'wo',
+        status:w.wo_status
+      })),
+      ...(sched||[]).map(s=>({
+        title:s.job_title||s.customer_name||'Job',
+        sub:(s.technician?s.technician+' · ':'')+( s.start_time?formatTime(s.start_time):''),
+        addr:s.address||'',
+        type:'sched',
+        status:s.status
+      }))
+    ];
+
+    const banner=document.getElementById('today-reminders');
+    const list=document.getElementById('today-reminders-list');
+    if(!banner||!list)return;
+
+    if(allToday.length){
+      banner.style.display='block';
+      list.innerHTML=allToday.map(j=>`
+        <div style="background:rgba(255,255,255,.15);border-radius:8px;padding:8px 10px;margin-bottom:6px">
+          <div style="font-size:13px;font-weight:700">${j.title}</div>
+          <div style="font-size:11px;opacity:.8;margin-top:2px">${j.sub}</div>
+          ${j.addr?`<a href="https://maps.google.com/?q=${encodeURIComponent(j.addr)}" target="_blank" style="font-size:11px;color:#93c5fd;text-decoration:none">📍 ${j.addr}</a>`:''}
+        </div>`).join('');
+    } else {
+      banner.style.display='none';
+    }
+  }catch(e){console.error('Reminder load error:',e);}
+}
+
+// ============================================================
+// FEATURE: CUSTOMER HISTORY
+// ============================================================
+async function showCustomerHistory(name){
+  if(!name||name.length<2)return;
+  try{
+    // Search invoices and work orders for this customer
+    const[{data:docs},{data:wos}]=await Promise.all([
+      sb.from('docs').select('inv_num,doc_type,inv_date,total,payment_status,client_name').ilike('client_name','%'+name+'%').order('created_at',{ascending:false}).limit(10),
+      sb.from('work_orders').select('wo_num,wo_date,requested_by,wo_status,problem_description').ilike('requested_by','%'+name+'%').order('created_at',{ascending:false}).limit(10)
+    ]);
+
+    const allHistory=[
+      ...(docs||[]).map(d=>({date:d.inv_date||'',type:d.doc_type==='estimate'?'📋 Estimate':'📄 Invoice',ref:d.inv_num,amount:'$'+(d.total||0).toFixed(2),status:d.payment_status||''})),
+      ...(wos||[]).map(w=>({date:w.wo_date||'',type:'🔧 Work Order',ref:w.wo_num,amount:'',status:w.wo_status||''}))
+    ].sort((a,b)=>b.date.localeCompare(a.date));
+
+    if(!allHistory.length)return;
+
+    // Show in a toast-style popup
+    const existing=document.getElementById('cust-history-popup');
+    if(existing)existing.remove();
+
+    const popup=document.createElement('div');
+    popup.id='cust-history-popup';
+    popup.style.cssText='position:fixed;bottom:80px;left:16px;right:16px;background:white;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.2);z-index:9999;max-height:300px;overflow-y:auto;padding:14px';
+    popup.innerHTML=`
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;color:#1a5fa8">📋 History for ${name}</div>
+        <button onclick="this.parentNode.parentNode.remove()" style="background:none;border:none;font-size:18px;cursor:pointer;color:#64748b">✕</button>
+      </div>
+      ${allHistory.map(h=>`
+        <div style="padding:6px 0;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:12px;font-weight:600">${h.type} · ${h.ref}</div>
+            <div style="font-size:11px;color:#94a3b8">${h.date}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:12px;font-weight:600;color:#1a5fa8">${h.amount}</div>
+            <div style="font-size:10px;color:#64748b">${h.status}</div>
+          </div>
+        </div>`).join('')}`;
+    document.body.appendChild(popup);
+    // Auto close after 10 seconds
+    setTimeout(()=>{if(popup.parentNode)popup.remove();},10000);
+  }catch(e){console.error('Customer history error:',e);}
+}
+
+// ============================================================
+// FEATURE: JOB COMPLETION REPORT PDF
+// ============================================================
+function generateCompletionReport(){
+  const d=getWOForm();
+  if(!d.wo_num){toast('Open a work order first');return;}
+
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:'pt',format:'letter'});
+  const ac=[26,95,168];const lm=40;const pw=532;const r=lm+pw;
+  let y=50;
+
+  // Header
+  doc.setFillColor(240,246,255);doc.rect(0,0,612,90,'F');
+  doc.setFillColor(...ac);doc.rect(0,0,6,90,'F');
+  try{doc.addImage(currentLogoSrc,'JPEG',lm,y-8,72,58);}catch(e){}
+  doc.setFont('helvetica','bold');doc.setFontSize(18);doc.setTextColor(...ac);
+  doc.text('KPC PLUMBING',122,y+10);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(100,100,100);
+  doc.text('Licensed · Bonded · Insured  |  409.553.9241',122,y+24);
+  doc.setFont('helvetica','bold');doc.setFontSize(14);doc.setTextColor(...ac);
+  doc.text('JOB COMPLETION REPORT',r,y+14,{align:'right'});
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(80,80,80);
+  doc.text('Work Order: '+d.wo_num,r,y+30,{align:'right'});
+  doc.text('Date: '+new Date().toLocaleDateString(),r,y+44,{align:'right'});
+  y=100;
+
+  // Customer & Job Info
+  doc.setFillColor(...ac);doc.rect(lm,y,pw,20,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+  doc.text('JOB INFORMATION',lm+6,y+14);y+=20;
+
+  const infoRows=[
+    ['Customer',d.requested_by||''],
+    ['Address',d.address||''],
+    ['Phone',d.requester_phone||''],
+    ['Appointment',d.appt_date?(d.appt_date+(d.appt_time?' at '+d.appt_time:'')):''],
+    ['SWO #',d.swo_num||''],
+    ['Service Fee','$'+(d.service_fee||0).toFixed(2)],
+    ['Assigned To',d.assigned_to||''],
+    ['Status',d.wo_status||'']
+  ];
+
+  infoRows.forEach(([label,val],i)=>{
+    if(!val)return;
+    if(i%2===0)doc.setFillColor(245,248,255);
+    else doc.setFillColor(255,255,255);
+    doc.rect(lm,y,pw,18,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(80,80,80);
+    doc.text(label+':',lm+6,y+13);
+    doc.setFont('helvetica','normal');doc.setTextColor(20,20,20);
+    doc.text(String(val),lm+100,y+13,{maxWidth:pw-110});
+    y+=18;
+  });
+  y+=10;
+
+  // Problem Description
+  if(d.problem_description){
+    doc.setFillColor(...ac);doc.rect(lm,y,pw,20,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+    doc.text('PROBLEM DESCRIPTION',lm+6,y+14);y+=26;
+    doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(40,40,40);
+    const descLines=doc.splitTextToSize(d.problem_description,pw-12);
+    doc.text(descLines,lm+6,y);y+=descLines.length*13+10;
+  }
+
+  // Work Performed
+  if(d.work_description){
+    doc.setFillColor(...ac);doc.rect(lm,y,pw,20,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+    doc.text('WORK PERFORMED',lm+6,y+14);y+=26;
+    doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(40,40,40);
+    const workLines=doc.splitTextToSize(d.work_description,pw-12);
+    doc.text(workLines,lm+6,y);y+=workLines.length*13+10;
+  }
+
+  // Quick Notes
+  if(quickNotes.length){
+    doc.setFillColor(...ac);doc.rect(lm,y,pw,20,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+    doc.text('NOTES & UPDATES',lm+6,y+14);y+=26;
+    quickNotes.forEach(n=>{
+      if(y>700){doc.addPage();y=50;}
+      doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(40,40,40);
+      doc.text('• '+n.text,lm+6,y);
+      doc.setTextColor(120,120,120);doc.setFontSize(8);
+      doc.text(n.time+(n.tech?' · '+n.tech:''),r,y,{align:'right'});
+      y+=14;
+    });
+    y+=6;
+  }
+
+  // Parts / Line Items
+  if(woItems.length){
+    if(y>650){doc.addPage();y=50;}
+    doc.setFillColor(...ac);doc.rect(lm,y,pw,20,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+    doc.text('PARTS & MATERIALS',lm+6,y+14);doc.text('QTY',lm+340,y+14);doc.text('PRICE',lm+400,y+14);doc.text('TOTAL',r-6,y+14,{align:'right'});y+=20;
+    let subtotal=0;
+    woItems.forEach((item,i)=>{
+      if(y>700){doc.addPage();y=50;}
+      if(i%2===0)doc.setFillColor(245,248,255);else doc.setFillColor(255,255,255);
+      doc.rect(lm,y,pw,18,'F');
+      doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(20,20,20);
+      doc.text(item.desc||'',lm+6,y+13,{maxWidth:300});
+      doc.text(String(item.qty||1),lm+346,y+13);
+      doc.text('$'+(item.unitCost||0).toFixed(2),lm+400,y+13);
+      const lineTotal=(item.qty||1)*(item.unitCost||0);
+      subtotal+=lineTotal;
+      doc.setFont('helvetica','bold');
+      doc.text('$'+lineTotal.toFixed(2),r-6,y+13,{align:'right'});
+      y+=18;
+    });
+    doc.setFillColor(...ac);doc.rect(lm,y,pw,22,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(255,255,255);
+    doc.text('TOTAL',lm+6,y+15);
+    doc.text('$'+subtotal.toFixed(2),r-6,y+15,{align:'right'});
+    y+=30;
+  }
+
+  // Photos
+  if(woPhotos.length){
+    if(y>550){doc.addPage();y=50;}
+    doc.setFillColor(...ac);doc.rect(lm,y,pw,20,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+    doc.text('JOB SITE PHOTOS ('+woPhotos.length+')',lm+6,y+14);y+=26;
+    let px=lm;let py=y;
+    woPhotos.slice(0,6).forEach((p,i)=>{
+      if(px+90>r){px=lm;py+=100;}
+      if(py>680){doc.addPage();py=50;px=lm;}
+      try{
+        const src=p.url||p.localSrc||'';
+        if(src)doc.addImage(src,'JPEG',px,py,85,85);
+      }catch(e){}
+      px+=92;
+    });
+    y=py+95;
+  }
+
+  // Signatures
+  if(y>650){doc.addPage();y=50;}
+  doc.setFillColor(...ac);doc.rect(lm,y,pw,20,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+  doc.text('SIGNATURES',lm+6,y+14);y+=26;
+
+  if(techSigData){
+    try{doc.addImage(techSigData,'PNG',lm,y,160,50);}catch(e){}
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(80,80,80);
+    doc.text('Technician: '+(d.assigned_to||''),lm,y+58);
+  }
+  if(supSigData){
+    try{doc.addImage(supSigData,'PNG',lm+200,y,160,50);}catch(e){}
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(80,80,80);
+    doc.text('Supervisor: '+(d.supervisor||''),lm+200,y+58);
+  }
+  y+=70;
+
+  // Checklist
+  const checkItems=['Photos taken','Diagnosis documented','Parts listed','Customer signature','Invoice created','Exported to QuickBooks','Updated in Rely'];
+  if(y>650){doc.addPage();y=50;}
+  doc.setFillColor(...ac);doc.rect(lm,y,pw,20,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(255,255,255);
+  doc.text('JOB CHECKLIST',lm+6,y+14);y+=26;
+  checkItems.forEach((item,i)=>{
+    const checked=woChecklist['chk'+(i+1)];
+    doc.setFont('helvetica','normal');doc.setFontSize(9);
+    doc.setTextColor(checked?13:180,checked?158:38,checked?110:38);
+    doc.text((checked?'☑ ':'☐ ')+item,lm+6+(i>3?(pw/2):0),y+(i>3?(i-4)*16:i*16));
+  });
+  y+=80;
+
+  // Footer
+  doc.setFillColor(240,246,255);doc.rect(0,750,612,42,'F');
+  doc.setFillColor(...ac);doc.rect(0,750,6,42,'F');
+  doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(...ac);
+  doc.text('KPC Plumbing · Licensed · Bonded · Insured · 409.553.9241',306,764,{align:'center'});
+  doc.setTextColor(120,120,120);
+  doc.text('Texas State Board of Plumbing Examiners · 7915 Cameron Road, Austin, TX 78754 · (800) 845-6584',306,776,{align:'center'});
+
+  doc.save('KPC-Job-Completion-'+d.wo_num+'.pdf');
+  toast('Job Completion Report downloaded! ✅');
 }
 
 </script>
