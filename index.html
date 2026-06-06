@@ -6534,93 +6534,118 @@ async function deleteCustomPGItem(id){
 
 function exportQBIIF(){
   if(!allDocs.length){
-    toast('Load your saved invoices first');
+    toast('Load your saved invoices first — go to Saved tab first');
     return;
   }
-
   const docsToExport=getDocsToExport();
-  const invoices=docsToExport.filter(d=>d.doc_type==='invoice');
-  const estimates=docsToExport.filter(d=>d.doc_type==='estimate');
-  const allExport=[...invoices,...estimates];
+  const allExport=docsToExport.filter(d=>d.doc_type==='invoice'||d.doc_type==='estimate');
   if(!allExport.length){
     toast('No invoices or estimates found to export');
     return;
   }
 
+  // Determine QB Customer:Job structure
+  // Warranty jobs (have SWO in PO# or Job#) → Choice Home Warranty:SWO#
+  // Regular jobs → CustomerName:InvNum
+  function getQBNames(doc){
+    const poNum=(doc.po_num||'').replace(/^SWO-?/i,'').trim();
+    const jobNum=(doc.job_num||'').replace(/^(WO|SWO)-?/i,'').trim();
+    const swoNum=poNum.length>4?poNum:(jobNum.length>5?jobNum:'');
+    if(swoNum){
+      return{customer:'Choice Home Warranty',job:'Choice Home Warranty:'+swoNum};
+    }
+    const cust=(doc.client_name||'Customer').trim();
+    return{customer:cust,job:cust+':'+(doc.inv_num||doc.job_num||'JOB')};
+  }
+
   let iif='';
 
-  // ---- CUSTOMER LIST ----
-  iif+='!CUST	NAME	COMPANY	ADDR1	EMAIL	PHONE1\n';
-  const customers={};
-  invoices.forEach(inv=>{
-    const name=(inv.client_name||'').trim();
-    if(name&&!customers[name]){
-      customers[name]=true;
-      iif+=`CUST	${name}	${name}	${(inv.client_addr||'').replace(/\n/g,' ')}	${inv.client_email||''}	${inv.client_phone||''}\n`;
+  // ---- CUSTOMERS ----
+  iif+='!CUST\tNAME\tADDR1\tADDR2\tEMAIL\tPHONE1\n';
+  const addedCusts=new Set();
+
+  // Add Choice Home Warranty if any warranty jobs
+  if(allExport.some(d=>{
+    const po=(d.po_num||'').replace(/^SWO-?/i,'').trim();
+    const jn=(d.job_num||'').replace(/^(WO|SWO)-?/i,'').trim();
+    return po.length>4||jn.length>5;
+  })){
+    iif+='CUST\tChoice Home Warranty\t\t\t\t\n';
+    addedCusts.add('Choice Home Warranty');
+  }
+
+  // Add regular customers
+  allExport.forEach(doc=>{
+    const{customer}=getQBNames(doc);
+    if(customer!=='Choice Home Warranty'&&!addedCusts.has(customer)){
+      addedCusts.add(customer);
+      const addrLines=(doc.client_addr||'').split('\n');
+      iif+=`CUST	${customer}	${addrLines[0]||''}	${addrLines[1]||''}	${doc.client_email||''}	${doc.client_phone||''}\n`;
     }
   });
 
-  // ---- INVOICE HEADERS ----
-  iif+='\n!TRNS	TRNSTYPE	DATE	ACCNT	NAME	AMOUNT	DOCNUM	MEMO\n';
-  iif+='!SPL	TRNSTYPE	DATE	ACCNT	NAME	AMOUNT	INVITEM	QTY	PRICE	MEMO\n';
+  // ---- JOBS (sub-customers) ----
+  iif+='!CUST\tNAME\tADDR1\tADDR2\tEMAIL\tPHONE1\tCUSTOMERISJOB\tPARENT\n';
+  const addedJobs=new Set();
+  allExport.forEach(doc=>{
+    const{customer,job}=getQBNames(doc);
+    if(!addedJobs.has(job)){
+      addedJobs.add(job);
+      const isWarranty=customer==='Choice Home Warranty';
+      const addr1=isWarranty?(doc.client_addr||'').replace(/\n/g,', '):(doc.client_addr||'').split('\n')[0]||'';
+      const addr2=isWarranty?(doc.client_name||''):'';
+      iif+=`CUST	${job}	${addr1}	${addr2}	${doc.client_email||''}	${doc.client_phone||''}	Y	${customer}\n`;
+    }
+  });
+
+  // ---- TRANSACTIONS ----
+  iif+='\n!TRNS\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tMEMO\n';
+  iif+='!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tINVITEM\tQTY\tPRICE\tMEMO\n';
   iif+='!ENDTRNS\n';
 
-  // First add customers from estimates too
-  allExport.forEach(inv=>{
-    const name=(inv.client_name||'').trim();
-    if(name&&!customers[name]){
-      customers[name]=true;
-      iif+=`CUST	${name}	${name}	${(inv.client_addr||'').replace(/\n/g,' ')}	${inv.client_email||''}	${inv.client_phone||''}\n`;
-    }
-  });
+  let invCount=0;let estCount=0;
+  allExport.forEach(doc=>{
+    const isEst=doc.doc_type==='estimate';
+    const{job}=getQBNames(doc);
+    const date=formatQBDate(doc.inv_date||doc.created_at);
+    const total=doc.total||0;
+    const trnsType=isEst?'ESTIMATE':'INVOICE';
+    const acct=isEst?'Estimates':'Accounts Receivable';
+    const kpcRef=doc.inv_num?'KPC: '+doc.inv_num:'';
+    const notes=(doc.notes||'').replace(/\t/g,' ').replace(/\n/g,' ').substring(0,80);
+    const memo=(kpcRef+(notes?' | '+notes:'')).substring(0,100);
 
-  allExport.forEach(inv=>{
-    const isEstimate=inv.doc_type==='estimate';
-    const date=formatQBDate(inv.inv_date||inv.created_at);
-    const name=(inv.client_name||'').trim()||'Customer';
-    const total=inv.total||0;
-    const docNum=inv.inv_num||'';
-    const memo=(inv.notes||'').replace(/\t/g,' ').replace(/\n/g,' ');
-    // QuickBooks uses ESTIMATE for estimates, INVOICE for invoices
-    const trnsType=isEstimate?'ESTIMATE':'INVOICE';
-    const acct=isEstimate?'Estimates':'Accounts Receivable';
+    iif+=`TRNS	${trnsType}	${date}	${acct}	${job}	${total.toFixed(2)}	${memo}\n`;
 
-    // Transaction header
-    const fullMemo=(docNum?'KPC Ref: '+docNum+(memo?' | '+memo:''):memo).substring(0,100);
-    iif+=`TRNS	${trnsType}	${date}	${acct}	${job}	${total.toFixed(2)}		${fullMemo}\n`;
-
-    // Line items
-    const items=inv.items||[];
+    const items=doc.items||[];
     if(items.length>0){
       items.forEach(item=>{
         if(item.desc&&(item.price||0)>0){
-          const lineAmt=((item.qty||1)*(item.price||0));
+          const amt=((item.qty||1)*(item.price||0));
           const desc=(item.desc||'').replace(/\t/g,' ').replace(/\n/g,' ');
-          iif+=`SPL	${trnsType}	${date}	Plumbing Income	${name}	-${lineAmt.toFixed(2)}	${desc}	${item.qty||1}	${(item.price||0).toFixed(2)}	${desc}\n`;
+          iif+=`SPL	${trnsType}	${date}	Plumbing Income	${job}	-${amt.toFixed(2)}	${desc}	${item.qty||1}	${(item.price||0).toFixed(2)}	${desc}\n`;
         }
       });
     } else {
-      iif+=`SPL	${trnsType}	${date}	Plumbing Income	${name}	-${total.toFixed(2)}	Plumbing Services	1	${total.toFixed(2)}	Plumbing Services\n`;
+      iif+=`SPL	${trnsType}	${date}	Plumbing Income	${job}	-${total.toFixed(2)}	Plumbing Services	1	${total.toFixed(2)}	\n`;
     }
 
-    // Payment line only for paid invoices (not estimates)
-    if(!isEstimate&&inv.payment_status==='paid'&&inv.payment_method){
-      iif+=`SPL	INVOICE	${date}	${getQBPaymentAccount(inv.payment_method)}	${name}	${total.toFixed(2)}	Payment	1	${total.toFixed(2)}	${inv.payment_method} payment\n`;
+    if(!isEst&&doc.payment_status==='paid'&&doc.payment_method){
+      iif+=`SPL	INVOICE	${date}	Undeposited Funds	${job}	${total.toFixed(2)}	Payment	1	${total.toFixed(2)}	${doc.payment_method}\n`;
     }
 
     iif+='ENDTRNS\n';
+    isEst?estCount++:invCount++;
   });
 
-  // Download the IIF file
   const blob=new Blob([iif],{type:'text/plain'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
   a.href=url;
-  const dateStr=new Date().toISOString().split('T')[0];
-  a.download=`KPC-Plumbing-QB-${dateStr}.iif`;
+  a.download='KPC-Plumbing-QB-'+new Date().toISOString().split('T')[0]+'.iif';
   a.click();
   URL.revokeObjectURL(url);
-  toast(`Exported ${invoices.length} invoices + ${estimates.length} estimates to QuickBooks! ✅`);
+  toast('Exported '+invCount+' invoices + '+estCount+' estimates to QuickBooks! ✅');
 }
 
 function formatQBDate(dateStr){
