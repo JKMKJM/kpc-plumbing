@@ -6532,9 +6532,14 @@ async function deleteCustomPGItem(id){
 // QUICKBOOKS EXPORT MODULE
 // ============================================================
 
-function exportQBIIF(){
+async function exportQBIIF(){
+  // Auto-load invoices if not already loaded
   if(!allDocs.length){
-    toast('Load your saved invoices first — go to Saved tab first');
+    toast('Loading invoices...');
+    await loadAndRenderSaved();
+  }
+  if(!allDocs.length){
+    toast('No saved invoices found');
     return;
   }
   const docsToExport=getDocsToExport();
@@ -6561,7 +6566,7 @@ function exportQBIIF(){
   let iif='';
 
   // ---- CUSTOMERS ----
-  iif+='!CUST\tNAME\tADDR1\tADDR2\tEMAIL\tPHONE1\n';
+  iif+='!CUST\tNAME\tEMAIL\tPHONE1\n';
   const addedCusts=new Set();
 
   // Add Choice Home Warranty if any warranty jobs
@@ -6585,22 +6590,20 @@ function exportQBIIF(){
   });
 
   // ---- JOBS (sub-customers) ----
-  iif+='!CUST\tNAME\tADDR1\tADDR2\tEMAIL\tPHONE1\tCUSTOMERISJOB\tPARENT\n';
+  iif+='!CUST\tNAME\tEMAIL\tPHONE1\tCUSTOMERISJOB\tPARENT\n';
   const addedJobs=new Set();
   allExport.forEach(doc=>{
     const{customer,job}=getQBNames(doc);
     if(!addedJobs.has(job)){
       addedJobs.add(job);
       const isWarranty=customer==='Choice Home Warranty';
-      const addr1=isWarranty?(doc.client_addr||'').replace(/\n/g,', '):(doc.client_addr||'').split('\n')[0]||'';
-      const addr2=isWarranty?(doc.client_name||''):'';
       iif+=`CUST	${job}	${addr1}	${addr2}	${doc.client_email||''}	${doc.client_phone||''}	Y	${customer}\n`;
     }
   });
 
   // ---- TRANSACTIONS ----
   iif+='\n!TRNS\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tMEMO\n';
-  iif+='!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tINVITEM\tQTY\tPRICE\tMEMO\n';
+  iif+='!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tINVITEM\tQNTY\tPRICE\tMEMO\n';
   iif+='!ENDTRNS\n';
 
   let invCount=0;let estCount=0;
@@ -6673,9 +6676,13 @@ function getQBPaymentAccount(method){
   return map[(method||'').toLowerCase()]||'Undeposited Funds';
 }
 
-function exportInvoicesCSV(){
+async function exportInvoicesCSV(){
   if(!allDocs.length){
-    toast('Load your saved invoices first');
+    toast('Loading invoices...');
+    await loadAndRenderSaved();
+  }
+  if(!allDocs.length){
+    toast('No saved invoices found');
     return;
   }
   const docsForCSV=getDocsToExport().filter(d=>d.doc_type==='invoice'||d.doc_type==='estimate');
