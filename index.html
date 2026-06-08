@@ -800,6 +800,10 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       <button class="btn btn-email" onclick="emailWO()">✉ Email Work Order</button>
       <button class="btn btn-convert" onclick="convertWOtoInvoice()">🔄 Convert to Invoice</button>
     </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <button onclick="generateCompletionReport()" style="background:#0d9e6e;color:white;border:none;border-radius:10px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">📋 Completion Report</button>
+      <button onclick="addWOToGoogleCal()" style="background:#4285F4;color:white;border:none;border-radius:10px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">📅 Add to Google Cal</button>
+    </div>
     <p class="bottom-note">© <span class="yr-span"></span> KPC Plumbing. All rights reserved.</p>
 
     <div class="card" style="margin-top:14px">
@@ -1052,6 +1056,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       <button class="btn-cancel" onclick="closeSchedModal()">Cancel</button>
       <button class="btn-green" onclick="saveScheduleEntry()">💾 Save</button>
     </div>
+    <button onclick="addSchedToGoogleCal()" style="width:100%;margin-top:8px;background:#4285F4;color:white;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">📅 Add to Google Calendar</button>
     <button id="sched-delete-btn" onclick="deleteScheduleEntry()" style="width:100%;margin-top:8px;background:#fee2e2;color:#ef4444;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">🗑 Delete</button>
   </div>
 </div>
