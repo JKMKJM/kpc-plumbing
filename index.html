@@ -6926,36 +6926,27 @@ async function autoSaveQuickNotes(){
 async function loadTodayReminders(){
   const today=new Date().toISOString().split('T')[0];
   try{
-    // Check work orders with today's appointment
-    const{data:wos}=await sb.from('work_orders')
-      .select('wo_num,requested_by,appt_date,appt_time,address,wo_status')
-      .eq('appt_date',today)
-      .neq('wo_status','completed')
-      .order('appt_time');
-
-    // Check schedule entries for today
+    // Only pull from schedules — WO saves already create schedule entries
     const{data:sched}=await sb.from('schedules')
       .select('*')
       .eq('schedule_date',today)
       .neq('status','completed')
       .order('start_time');
 
-    const allToday=[
-      ...(wos||[]).map(w=>({
-        title:w.requested_by||'Work Order',
-        sub:w.wo_num+(w.appt_time?' at '+formatTime(w.appt_time):''),
-        addr:w.address||'',
-        type:'wo',
-        status:w.wo_status
-      })),
-      ...(sched||[]).map(s=>({
-        title:s.job_title||s.customer_name||'Job',
-        sub:(s.technician?s.technician+' · ':'')+( s.start_time?formatTime(s.start_time):''),
-        addr:s.address||'',
-        type:'sched',
-        status:s.status
-      }))
-    ];
+    // Deduplicate by wo_num
+    const seen=new Set();
+    const allToday=(sched||[]).filter(s=>{
+      const key=s.wo_num||s.job_title||s.id;
+      if(seen.has(key))return false;
+      seen.add(key);
+      return true;
+    }).map(s=>({
+      title:s.job_title||s.customer_name||'Job',
+      sub:(s.technician?s.technician+' · ':'')+( s.start_time?formatTime(s.start_time):''),
+      addr:s.address||'',
+      type:'sched',
+      status:s.status
+    }));
 
     const banner=document.getElementById('today-reminders');
     const list=document.getElementById('today-reminders-list');
@@ -7204,6 +7195,65 @@ function generateCompletionReport(){
 
   doc.save('KPC-Job-Completion-'+d.wo_num+'.pdf');
   toast('Job Completion Report downloaded! ✅');
+}
+
+
+// ============================================================
+// GOOGLE CALENDAR INTEGRATION
+// ============================================================
+
+function formatGCalDate(dateStr, timeStr){
+  // Format: YYYYMMDDTHHMMSS
+  if(!dateStr)return '';
+  const d=dateStr.replace(/-/g,'');
+  if(!timeStr)return d;
+  const t=timeStr.replace(/:/g,'').substring(0,4)+'00';
+  return d+'T'+t+'00';
+}
+
+function addWOToGoogleCal(){
+  const d=getWOForm();
+  if(!d.appt_date){toast('Set an appointment date first');return;}
+
+  const title=encodeURIComponent('KPC Plumbing: '+(d.requested_by||'Work Order')+(d.swo_num?' - SWO '+d.swo_num:'')+(d.wo_num?' ('+d.wo_num+')':''));
+  const start=formatGCalDate(d.appt_date, d.appt_time?d.appt_time.split('-')[0].trim():'08:00');
+  const end=formatGCalDate(d.appt_date, d.appt_time&&d.appt_time.includes('-')?d.appt_time.split('-')[1].trim():'10:00');
+
+  const details=encodeURIComponent(
+    'Work Order: '+(d.wo_num||'')+
+    (d.swo_num?'\nSWO #: '+d.swo_num:'')+
+    (d.service_fee?'\nService Fee: $'+d.service_fee:'')+
+    (d.requester_phone?'\nPhone: '+d.requester_phone:'')+
+    (d.problem_description?'\nProblem: '+d.problem_description.substring(0,200):'')+
+    '\n\nKPC Plumbing | 409.553.9241'
+  );
+
+  const location=encodeURIComponent(d.address||d.department||'');
+  const url=`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${start}/${end}&details=${details}&location=${location}`;
+
+  window.open(url,'_blank');
+  toast('Opening Google Calendar... ✅');
+}
+
+function addSchedToGoogleCal(){
+  const title=encodeURIComponent('KPC: '+(document.getElementById('sched-customer').value||document.getElementById('sched-title').value||'Job'));
+  const date=document.getElementById('sched-entry-date').value;
+  const startTime=document.getElementById('sched-start').value||'08:00';
+  const endTime=document.getElementById('sched-end').value||'10:00';
+  const address=document.getElementById('sched-address').value||'';
+  const notes=document.getElementById('sched-notes').value||'';
+  const tech=document.getElementById('sched-tech').value||'';
+
+  if(!date){toast('Set a date first');return;}
+
+  const start=formatGCalDate(date,startTime);
+  const end=formatGCalDate(date,endTime);
+  const details=encodeURIComponent((tech?'Technician: '+tech+'\n':'')+(notes?'Notes: '+notes:'')+'\n\nKPC Plumbing | 409.553.9241');
+  const location=encodeURIComponent(address);
+  const url=`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${start}/${end}&details=${details}&location=${location}`;
+
+  window.open(url,'_blank');
+  toast('Opening Google Calendar... ✅');
 }
 
 </script>
