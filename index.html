@@ -1429,15 +1429,57 @@ function delItem(id){items=items.filter(i=>i.id!==id);renderItems();}
 function recalc(){
   const sub=items.reduce((s,i)=>s+(i.qty*(i.price||0)),0);
   const tax=sub*((parseFloat(document.getElementById('tax-rate').value)||0)/100);
+  // For warranty jobs (SWO#), subtract service call fee ONLY if there are
+  // parts/labor items (not when billing customer just the service call fee)
+  const poNum=document.getElementById('po-num')?document.getElementById('po-num').value:'';
+  const isSWO=poNum.match(/SWO-?\d{5,}/i);
+  // Only deduct if items contain parts/labor (not just service call fee alone)
+  const onlyScf=items.length>0&&items.every(i=>(i.desc||'').toLowerCase().includes('service call fee')||(i.desc||'').toLowerCase().includes('service fee'));
+  const svcFee=(isSWO&&!onlyScf)?getServiceFeeFromPO():0;
+  const grand=Math.max(0,sub+tax-svcFee);
   document.getElementById('t-sub').textContent='$'+sub.toFixed(2);
   document.getElementById('t-tax').textContent='$'+tax.toFixed(2);
-  document.getElementById('t-grand').textContent='$'+(sub+tax).toFixed(2);
+  if(svcFee>0){
+    document.getElementById('t-grand').textContent='$'+grand.toFixed(2);
+    // Show service fee deduction
+    let svcEl=document.getElementById('t-svc-fee');
+    if(!svcEl){
+      const grandRow=document.getElementById('t-grand').parentNode;
+      const div=document.createElement('div');
+      div.style.cssText='display:flex;justify-content:space-between;font-size:13px;color:#0d9e6e;font-weight:600;padding:2px 0';
+      div.id='t-svc-fee-row';
+      div.innerHTML='<span>Service Call Fee Deducted</span><span id="t-svc-fee">-$'+svcFee.toFixed(2)+'</span>';
+      grandRow.parentNode.insertBefore(div,grandRow);
+    } else {
+      svcEl.textContent='-$'+svcFee.toFixed(2);
+    }
+  } else {
+    document.getElementById('t-grand').textContent='$'+(sub+tax).toFixed(2);
+    const svcRow=document.getElementById('t-svc-fee-row');
+    if(svcRow)svcRow.remove();
+  }
+}
+
+function getServiceFeeFromPO(){
+  // Try to get service fee from WO form if converting from WO
+  const woFee=document.getElementById('wo-service-fee');
+  if(woFee&&parseFloat(woFee.value)>0)return parseFloat(woFee.value);
+  // Otherwise look for service call fee in notes
+  const notes=document.getElementById('notes')?document.getElementById('notes').value:'';
+  const match=notes.match(/Service Fee[:\s]+\$?([\d\.]+)/i);
+  if(match)return parseFloat(match[1])||0;
+  return 100; // Default CHW service fee
 }
 
 function getForm(){
   const sub=items.reduce((s,i)=>s+(i.qty*(i.price||0)),0);
   const taxRate=parseFloat(document.getElementById('tax-rate').value)||0;
   const tax=sub*(taxRate/100);
+  const poNum=document.getElementById('po-num')?document.getElementById('po-num').value:'';
+  const isSWO=poNum.match(/SWO-?\d{5,}/i);
+  const onlyScfInForm=items.length>0&&items.every(i=>(i.desc||'').toLowerCase().includes('service call fee')||(i.desc||'').toLowerCase().includes('service fee'));
+  const svcFee=(isSWO&&!onlyScfInForm)?getServiceFeeFromPO():0;
+  const grandTotal=Math.max(0,sub+tax-svcFee);
   return{
     doc_type:docType,
     biz_name:document.getElementById('biz-name').value,
@@ -2065,14 +2107,26 @@ function renderWOItems(){
       <button onclick="delWOItem(${item.id})" style="background:none;border:none;cursor:pointer;color:#cbd5e1;font-size:16px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:6px">✕</button>`;
     c.appendChild(row);
   });
-  document.getElementById('wo-parts-total').textContent='$'+total.toFixed(2);
+  const swoNum2=document.getElementById('wo-swo-num')?document.getElementById('wo-swo-num').value:'';
+  const svcFee2=swoNum2?parseFloat(document.getElementById('wo-service-fee').value)||0:0;
+  const net2=Math.max(0,total-svcFee2);
+  document.getElementById('wo-parts-total').textContent='$'+net2.toFixed(2)+(svcFee2>0?' (after $'+svcFee2.toFixed(2)+' SCF deduction)':'');
 }
 
 function updWO(id,f,v){
   const it=woItems.find(i=>i.id===id);
   if(!it)return;
   it[f]=f==='desc'||f==='partNum'?v:parseFloat(v)||0;
-  renderWOItems();
+  // Only recalculate total — don't re-render (would lose focus)
+  recalcWOTotal();
+}
+function recalcWOTotal(){
+  const total=woItems.reduce((s,i)=>s+(i.qty||0)*(i.unitCost||0),0);
+  const swoNum=document.getElementById('wo-swo-num')?document.getElementById('wo-swo-num').value:'';
+  const svcFee=swoNum?parseFloat(document.getElementById('wo-service-fee').value)||0:0;
+  const net=Math.max(0,total-svcFee);
+  const el=document.getElementById('wo-parts-total');
+  if(el)el.textContent='$'+net.toFixed(2)+(svcFee>0?' (after $'+svcFee.toFixed(2)+' SCF deduction)':'');
 }
 function delWOItem(id){woItems=woItems.filter(i=>i.id!==id);renderWOItems();}
 
@@ -2364,13 +2418,20 @@ function convertWOtoInvoice(){
   document.getElementById('tech-name').value=d.assigned_to||'';
   // Load parts as line items
   items=[];
-  // Add service call fee as first line item if present
-  if(d.service_fee&&d.service_fee>0){
-    addItem('Service Call Fee',1,d.service_fee);
+  const isWarranty=d.swo_num&&d.swo_num.length>4;
+  const hasParts=d.parts&&d.parts.filter(p=>p.desc&&(p.unitCost||0)>0).length>0;
+
+  if(isWarranty&&!hasParts){
+    // Warranty job, no parts yet — bill customer just the service call fee
+    if(d.service_fee&&d.service_fee>0)addItem('Service Call Fee',1,d.service_fee);
+  } else if(isWarranty&&hasParts){
+    // Warranty job with parts — bill CHW (no service fee line item, deduction applied automatically)
+    d.parts.forEach(p=>{if(p.desc)addItem(p.desc,p.qty||1,p.unitCost||0);});
+  } else {
+    // Regular job — add service call fee + parts
+    if(d.service_fee&&d.service_fee>0)addItem('Service Call Fee',1,d.service_fee);
+    d.parts.forEach(p=>{if(p.desc)addItem(p.desc,p.qty||1,p.unitCost||0);});
   }
-  d.parts.forEach(p=>{
-    if(p.desc)addItem(p.desc,p.qty||1,p.unitCost||0);
-  });
   // Copy appointment date as invoice date if set
   if(d.appt_date)document.getElementById('inv-date').value=d.appt_date;
   // Copy SWO to job number field
