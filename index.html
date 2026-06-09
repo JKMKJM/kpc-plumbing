@@ -274,7 +274,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       <div id="items-list"></div>
       <button class="add-item-btn" onclick="addItem()">＋ Add item manually</button>
       <div class="totals">
-        <div class="tax-wrap"><label>Tax %</label><input type="number" id="tax-rate" value="0" min="0" max="100" step="0.1" oninput="recalc()"></div>
+        <div class="tax-wrap"><label>Tax %</label><input type="number" id="tax-rate" value="0" min="0" max="100" step="0.1" oninput="recalc()"></div><input type="hidden" id="inv-svc-fee" value="0">
         <div class="total-line"><span>Subtotal</span><span id="t-sub">$0.00</span></div>
         <div class="total-line"><span>Tax</span><span id="t-tax">$0.00</span></div>
         <div class="total-line grand"><span id="total-label">Total</span><span id="t-grand">$0.00</span></div>
@@ -1461,14 +1461,24 @@ function recalc(){
 }
 
 function getServiceFeeFromPO(){
-  // Try to get service fee from WO form if converting from WO
-  const woFee=document.getElementById('wo-service-fee');
-  if(woFee&&parseFloat(woFee.value)>0)return parseFloat(woFee.value);
-  // Otherwise look for service call fee in notes
-  const notes=document.getElementById('notes')?document.getElementById('notes').value:'';
-  const match=notes.match(/Service Fee[:\s]+\$?([\d\.]+)/i);
-  if(match)return parseFloat(match[1])||0;
-  return 100; // Default CHW service fee
+  // 1. Check hidden invoice service fee field (set when converting from WO)
+  const invFeeEl=document.getElementById('inv-svc-fee');
+  const invFeeVal=invFeeEl?parseFloat(invFeeEl.value)||0:0;
+  console.log('inv-svc-fee value:',invFeeVal);
+  if(invFeeVal>0)return invFeeVal;
+  // 2. Check WO service fee field (if still on WO tab)
+  const woFeeEl=document.getElementById('wo-service-fee');
+  const woFeeVal=woFeeEl?parseFloat(woFeeEl.value)||0:0;
+  console.log('wo-service-fee value:',woFeeVal);
+  if(woFeeVal>0)return woFeeVal;
+  // 3. Look for service call fee item in invoice items
+  const svcItem=items.find(i=>(i.desc||'').toLowerCase().includes('service call fee')||(i.desc||'').toLowerCase().includes('service fee'));
+  if(svcItem&&svcItem.price>0){console.log('Found in items:',svcItem.price);return svcItem.price;}
+  // 4. Check getForm data for stored value
+  const d=getForm();
+  if(d.inv_svc_fee>0){console.log('From getForm:',d.inv_svc_fee);return d.inv_svc_fee;}
+  console.log('No service fee found - returning 0');
+  return 0;
 }
 
 function getForm(){
@@ -1715,6 +1725,8 @@ function loadDoc(id){
   document.getElementById('notes').value=doc.notes||'';
   document.getElementById('tech-name').value=doc.technician||'';
   items=(doc.items||[]).map(it=>({...it,id:Date.now()+Math.random()}));
+  const invFeeField=document.getElementById('inv-svc-fee');
+  if(invFeeField)invFeeField.value=doc.inv_svc_fee||doc.service_fee_deducted||0;
   payStatus=doc.payment_status||( doc.paid?'paid':'unpaid');
   payMethod=doc.payment_method||'';
   setPayStatus(payStatus);
@@ -1870,7 +1882,12 @@ function buildEmailBody(d){
   if(d.client_email)body+=d.client_email+'\n';
   body+='\n'+line+'\n'+(isEst?'ESTIMATED SERVICES':'SERVICES')+':\n\n';
   (d.items||[]).forEach(it=>{if(it.desc){const amt=(it.qty||0)*(it.price||0);body+=it.desc+'\n  Qty: '+it.qty+'  x  $'+it.price.toFixed(2)+'  =  $'+amt.toFixed(2)+'\n\n';}});
-  body+=line+'\nSubtotal:  $'+sub.toFixed(2)+'\nTax ('+d.tax_rate+'%):  $'+tax.toFixed(2)+'\n'+(isEst?'ESTIMATE TOTAL':'TOTAL')+':  $'+grand.toFixed(2)+'\n';
+  const emailPoNum2=d.po_num||'';
+  const emailIsSWO2=emailPoNum2.match(/SWO-?\d{5,}/i);
+  const emailOnlyScf2=(d.items||[]).every(i=>(i.desc||'').toLowerCase().includes('service call fee')||(i.desc||'').toLowerCase().includes('service fee'));
+  const emailSvcFee2=(emailIsSWO2&&!emailOnlyScf2)?(d.service_fee_deducted||100):0;
+  const emailGrand2=Math.max(0,grand-emailSvcFee2);
+  body+=line+'\nSubtotal:  $'+sub.toFixed(2)+'\nTax ('+d.tax_rate+'%):  $'+tax.toFixed(2)+(emailSvcFee2>0?'\nService Call Fee Deducted:  -$'+emailSvcFee2.toFixed(2):'')+'\n'+(isEst?'ESTIMATE TOTAL':'TOTAL')+':  $'+emailGrand2.toFixed(2)+'\n';
   if(d.payment_method)body+='Payment:  '+d.payment_method+(d.paid?' (PAID)':'')+'\n';
   body+=line+'\n\n';
   if(d.notes)body+=d.notes+'\n\n';
@@ -1994,13 +2011,26 @@ function buildPDF(){
     doc.text('$'+((it.qty||0)*(it.price||0)).toFixed(2),r-8,y+15,{align:'right'});
     y+=21;
   });
+  // Calculate service fee deduction for warranty jobs
+  const pdfPoNum=d.po_num||'';
+  const pdfIsSWO=pdfPoNum.match(/SWO-?\d{5,}/i);
+  const pdfOnlyScf=(d.items||[]).length>0&&(d.items||[]).every(i=>(i.desc||'').toLowerCase().includes('service call fee')||(i.desc||'').toLowerCase().includes('service fee'));
+  const pdfSvcFee=(pdfIsSWO&&!pdfOnlyScf)?(d.service_fee_deducted||100):0;
+  const pdfGrand=Math.max(0,grand-pdfSvcFee);
+
   y+=14;const tx=lm+308;
   doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(80,80,80);
   doc.text('Subtotal',tx,y);doc.text('$'+sub.toFixed(2),r-8,y,{align:'right'});y+=17;
-  doc.text('Tax ('+d.tax_rate+'%)',tx,y);doc.text('$'+tax.toFixed(2),r-8,y,{align:'right'});y+=5;
+  if(d.tax_rate>0){doc.text('Tax ('+d.tax_rate+'%)',tx,y);doc.text('$'+tax.toFixed(2),r-8,y,{align:'right'});y+=17;}
+  if(pdfSvcFee>0){
+    doc.setTextColor(13,158,110);doc.setFont('helvetica','bold');
+    doc.text('Service Call Fee Deducted',tx,y);doc.text('-$'+pdfSvcFee.toFixed(2),r-8,y,{align:'right'});
+    doc.setTextColor(80,80,80);doc.setFont('helvetica','normal');y+=17;
+  }
+  y+=5;
   doc.setDrawColor(200,210,230);doc.line(tx,y,r,y);y+=13;
   doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(...ac);
-  doc.text(isEst?'ESTIMATE TOTAL':'TOTAL',tx,y);doc.text('$'+grand.toFixed(2),r-8,y,{align:'right'});
+  doc.text(isEst?'ESTIMATE TOTAL':'TOTAL',tx,y);doc.text('$'+pdfGrand.toFixed(2),r-8,y,{align:'right'});
   if(d.payment_status){
     y+=16;doc.setFont('helvetica','normal');doc.setFontSize(9);
     if(d.payment_status==='paid'){
@@ -2442,6 +2472,9 @@ function convertWOtoInvoice(){
   // Tag invoice with WO number so it can be found from work order
   if(d.wo_num)document.getElementById('job-num').value='WO-'+d.wo_num;
   if(d.swo_num)document.getElementById('po-num').value='SWO-'+d.swo_num;
+  // Store service fee in hidden field for PDF/email use
+  const invSvcFeeEl=document.getElementById('inv-svc-fee');
+  if(invSvcFeeEl&&d.service_fee)invSvcFeeEl.value=parseFloat(d.service_fee)||0;
   renderItems();
   getNextNumber('invoice').then(n=>document.getElementById('inv-num').value=n);
   currentDocId=null; // Make sure it saves as new invoice
