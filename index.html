@@ -3570,32 +3570,53 @@ async function checkMissedClockOut(){
 }
 
 async function fixMissedClockOut(entryId, entryDate){
-  const endTime=prompt('Enter clock-out time for '+entryDate+' (HH:MM format, e.g. 17:00):');
-  if(!endTime||!/^\d{2}:\d{2}$/.test(endTime)){
-    toast('Please enter time in HH:MM format');
-    return;
-  }
+  // Show a nicer input modal instead of browser prompt
+  const existing=document.getElementById('fix-clockout-modal');
+  if(existing)existing.remove();
+
+  const modal=document.createElement('div');
+  modal.id='fix-clockout-modal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML=`
+    <div style="background:white;border-radius:16px;padding:20px;width:100%;max-width:320px">
+      <div style="font-size:15px;font-weight:700;color:#dc2626;margin-bottom:6px">⚠️ Fix Missing Clock-Out</div>
+      <div style="font-size:13px;color:#64748b;margin-bottom:14px">Date: ${entryDate}</div>
+      <label style="font-size:12px;font-weight:600;color:#475569;display:block;margin-bottom:6px">Enter clock-out time:</label>
+      <input type="time" id="fix-clockout-time" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:16px;font-family:inherit;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button onclick="document.getElementById('fix-clockout-modal').remove()" style="background:#f1f5f9;border:none;border-radius:10px;padding:11px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;color:#475569">Cancel</button>
+        <button onclick="submitFixClockOut('${entryId}','${entryDate}')" style="background:#dc2626;color:white;border:none;border-radius:10px;padding:11px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">Save Fix</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  // Default to end of work day
+  document.getElementById('fix-clockout-time').value='17:00';
+}
+
+async function submitFixClockOut(entryId, entryDate){
+  const timeEl=document.getElementById('fix-clockout-time');
+  const endTime=timeEl?timeEl.value:'';
+  if(!endTime){toast('Please enter a time');return;}
+  document.getElementById('fix-clockout-modal').remove();
+
   setSyncStatus('syncing');
   try{
-    // Get the entry
     const{data:entry}=await sb.from('time_entries').select('*').eq('id',entryId).single();
     if(!entry)throw new Error('Entry not found');
-
     const hours=calcHours(entry.clock_in,endTime);
     await sb.from('time_entries').update({
       clock_out:endTime,
       hours_regular:hours,
       total_hours:hours
     }).eq('id',entryId);
-
     setSyncStatus('ok');
     toast('Clock-out fixed! ✅');
-    // Hide banner and refresh
     document.getElementById('missed-clockout-banner').style.display='none';
     await fetchTimeEntries();
   }catch(e){
     setSyncStatus('error');
     toast('Fix failed: '+e.message);
+    console.error(e);
   }
 }
 
