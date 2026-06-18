@@ -198,6 +198,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
   </div>
   <input type="file" id="logo-file" accept="image/*" style="display:none" onchange="changeLogo(this)">
   <input type="file" id="wo-photo-file" accept="image/*" capture="environment" multiple style="display:none" onchange="handleWOPhotos(this)">
+<input type="file" id="wo-gallery-file" accept="image/*" multiple style="display:none" onchange="handleWOPhotos(this)">
 
   <div class="tabs">
     <div class="tab active" onclick="showTab('doc')">📄 Invoice</div>
@@ -733,7 +734,11 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       <div class="photos-grid" id="wo-photos-grid">
         <div class="photo-add" onclick="document.getElementById('wo-photo-file').click()">
           <span style="font-size:24px">📷</span>
-          <span>Add photo</span>
+          <span>Camera</span>
+        </div>
+        <div class="photo-add" onclick="document.getElementById('wo-gallery-file').click()">
+          <span style="font-size:24px">🖼️</span>
+          <span>Gallery</span>
         </div>
       </div>
       <button onclick="recoverWOPhotos()" style="margin-top:8px;width:100%;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px;font-size:12px;font-weight:600;color:#92400e;cursor:pointer;font-family:inherit">🔄 Recover Photos from Cloud</button>
@@ -2960,7 +2965,6 @@ function handleWOPhotos(input){
 }
 
 async function uploadWOPhoto(file,tempId,retryCount=0){
-  // Make sure WO is saved first so we have a currentWOId
   if(!currentWOId){
     toast('⚠️ Save the work order first before adding photos');
     const idx=woPhotos.findIndex(p=>p.tempId===tempId);
@@ -2976,6 +2980,8 @@ async function uploadWOPhoto(file,tempId,retryCount=0){
     renderWOPhotos();
     return;
   }
+  const MAX_RETRIES=20; // retry every 30 seconds for ~10 minutes
+  const RETRY_DELAY=30000;
   try{
     const timestamp=Date.now();
     const ext=(file.name||'photo.jpg').split('.').pop()||'jpg';
@@ -2995,17 +3001,31 @@ async function uploadWOPhoto(file,tempId,retryCount=0){
   }catch(e){
     console.error('Photo upload failed:',e);
     const idx=woPhotos.findIndex(p=>p.tempId===tempId);
-    if(retryCount<3){
-      // Auto-retry up to 3 times
-      toast('Upload failed — retrying ('+(retryCount+1)+'/3)...');
-      setTimeout(()=>uploadWOPhoto(file,tempId,retryCount+1),3000);
+    if(retryCount<MAX_RETRIES){
+      // Update overlay to show retry status
+      if(idx>=0){woPhotos[idx].retryCount=retryCount+1;woPhotos[idx].uploading=true;}
+      renderWOPhotos();
+      const minsLeft=Math.round(((MAX_RETRIES-retryCount)*RETRY_DELAY)/60000);
+      toast('Upload failed — retrying in 30s (attempt '+(retryCount+1)+'/'+MAX_RETRIES+')');
+      setTimeout(()=>uploadWOPhoto(file,tempId,retryCount+1),RETRY_DELAY);
     } else {
-      // Mark as failed after 3 retries
+      // All retries failed — save to phone as failsafe
       if(idx>=0){woPhotos[idx].uploading=false;woPhotos[idx].failed=true;}
       renderWOPhotos();
-      toast('❌ Photo upload failed after 3 tries — check your connection');
+      savePhotoToPhone(woPhotos[idx]?.localSrc,woNum,tempId);
+      toast('❌ Cloud upload failed — photo saved to your Downloads folder');
     }
   }
+}
+
+function savePhotoToPhone(dataUrl,woNum,tempId){
+  if(!dataUrl)return;
+  try{
+    const a=document.createElement('a');
+    a.href=dataUrl;
+    a.download='KPC-'+woNum+'-photo-'+Date.now()+'.jpg';
+    a.click();
+  }catch(e){console.error('Save to phone failed:',e);}
 }
 
 
@@ -3030,12 +3050,12 @@ function renderWOPhotos(){
   woPhotos.forEach((p,i)=>{
     const src=p.url||p.localSrc||'';
     let overlay='';
-    if(p.uploading)overlay='<div style="position:absolute;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;border-radius:8px;color:white;font-size:10px;font-weight:700">🔄 Uploading...</div>';
-    else if(p.failed)overlay='<div style="position:absolute;inset:0;background:rgba(220,38,38,.7);display:flex;align-items:center;justify-content:center;border-radius:8px;color:white;font-size:10px;font-weight:700;text-align:center;padding:4px">❌ Upload Failed</div>';
+    if(p.uploading)overlay='<div style="position:absolute;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;border-radius:8px;color:white;font-size:9px;font-weight:700;text-align:center;padding:4px">'+(p.retryCount?'🔄 Retry '+(p.retryCount)+'/20':'🔄 Uploading...')+'</div>';
+    else if(p.failed)overlay='<div style="position:absolute;inset:0;background:rgba(220,38,38,.7);display:flex;align-items:center;justify-content:center;border-radius:8px;color:white;font-size:9px;font-weight:700;text-align:center;padding:4px">❌ Saved to<br>Downloads</div>';
     else if(p.url)overlay='<div style="position:absolute;top:4px;right:4px;background:#0d9e6e;border-radius:999px;width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-size:9px">✓</div>';
     html+=`<div class="photo-thumb" onclick="openImgModal('wo_${i}')"><img src="${src}" alt="Job photo" style="width:100%;height:100%;object-fit:cover">${overlay}<button class="photo-del" onclick="event.stopPropagation();delWOPhoto(${i})">✕</button></div>`;
   });
-  html+=`<div class="photo-add" onclick="document.getElementById('wo-photo-file').click()"><span style="font-size:24px">📷</span><span>Add photo</span></div>`;
+  html+=`<div class="photo-add" onclick="document.getElementById('wo-photo-file').click()"><span style="font-size:24px">📷</span><span>Camera</span></div><div class="photo-add" onclick="document.getElementById('wo-gallery-file').click()"><span style="font-size:24px">🖼️</span><span>Gallery</span></div>`;
   grid.innerHTML=html;
 }
 
