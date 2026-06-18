@@ -197,7 +197,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
     </div>
   </div>
   <input type="file" id="logo-file" accept="image/*" style="display:none" onchange="changeLogo(this)">
-  <input type="file" id="wo-photo-file" accept="image/*" capture="environment" multiple style="display:none" onchange="handleWOPhotos(this)">
+  <input type="file" id="wo-photo-file" accept="image/*" capture="camera" style="display:none" onchange="handleWOPhotos(this)">
 <input type="file" id="wo-gallery-file" accept="image/*" multiple style="display:none" onchange="handleWOPhotos(this)">
 
   <div class="tabs">
@@ -742,6 +742,10 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
         </div>
       </div>
       <button onclick="recoverWOPhotos()" style="margin-top:8px;width:100%;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px;font-size:12px;font-weight:600;color:#92400e;cursor:pointer;font-family:inherit">🔄 Recover Photos from Cloud</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+        <button onclick="saveAllPhotosToDevice()" style="background:#7c3aed;color:white;border:none;border-radius:8px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">⬇ Save All Photos</button>
+        <button onclick="sharePhotoLinks()" style="background:#0d9e6e;color:white;border:none;border-radius:8px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">🔗 Copy Photo Links</button>
+      </div>
     </div>
 
     <div class="card">
@@ -805,9 +809,13 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       <button class="btn btn-email" onclick="emailWO()">✉ Email Work Order</button>
       <button class="btn btn-convert" onclick="convertWOtoInvoice()">🔄 Convert to Invoice</button>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
       <button onclick="generateCompletionReport()" style="background:#0d9e6e;color:white;border:none;border-radius:10px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">📋 Completion Report</button>
       <button onclick="addWOToGoogleCal()" style="background:#4285F4;color:white;border:none;border-radius:10px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">📅 Add to Google Cal</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <button onclick="shareWOPDF()" style="background:#7c3aed;color:white;border:none;border-radius:10px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">📤 Share WO PDF</button>
+      <button onclick="sharePhotoLinks()" style="background:#0d9e6e;color:white;border:none;border-radius:10px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">📤 Share Photos</button>
     </div>
     <p class="bottom-note">© <span class="yr-span"></span> KPC Plumbing. All rights reserved.</p>
 
@@ -7417,6 +7425,99 @@ function addSchedToGoogleCal(){
 
   window.open(url,'_blank');
   toast('Opening Google Calendar... ✅');
+}
+
+
+// ============================================================
+// PHOTO SHARING
+// ============================================================
+
+function saveAllPhotosToDevice(){
+  const uploaded=woPhotos.filter(p=>p.url&&p.url.startsWith('http'));
+  if(!uploaded.length){toast('No uploaded photos to save');return;}
+  toast('Saving '+uploaded.length+' photo'+(uploaded.length>1?'s':'')+' to your device...');
+  uploaded.forEach((p,i)=>{
+    setTimeout(()=>{
+      const a=document.createElement('a');
+      a.href=p.url;
+      a.download='KPC-WO-'+( document.getElementById('wo-num').value||'photo')+'-'+(i+1)+'.jpg';
+      a.target='_blank';
+      a.click();
+    },i*800); // stagger downloads so browser doesn't block them
+  });
+  setTimeout(()=>{
+    toast('✅ Photos saved! Find them in your Downloads folder to share via text.');
+  },uploaded.length*800+500);
+}
+
+function sharePhotoLinks(){
+  const uploaded=woPhotos.filter(p=>p.url&&p.url.startsWith('http'));
+  if(!uploaded.length){toast('No uploaded photos to share');return;}
+  const woNum=document.getElementById('wo-num').value||'WO';
+  const d=getWOForm();
+  let text='KPC Plumbing - '+woNum;
+  if(d.requested_by)text+='\n'+d.requested_by;
+  if(d.appt_date)text+='\nDate: '+d.appt_date;
+  text+='\n\nJob Site Photos:\n';
+  uploaded.forEach((p,i)=>{
+    text+='Photo '+(i+1)+': '+p.url+'\n';
+  });
+
+  // Try native share first (works on iPhone)
+  if(navigator.share){
+    navigator.share({
+      title:'KPC Plumbing - '+woNum+' Photos',
+      text:text
+    }).then(()=>toast('Shared! ✅')).catch(e=>fallbackCopyLinks(text));
+  } else {
+    fallbackCopyLinks(text);
+  }
+}
+
+function fallbackCopyLinks(text){
+  navigator.clipboard.writeText(text).then(()=>{
+    toast('✅ Photo links copied! Paste into text message or email.');
+  }).catch(()=>{
+    // Last resort - show in a modal to manually copy
+    const modal=document.createElement('div');
+    modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+    modal.innerHTML=`
+      <div style="background:white;border-radius:16px;padding:20px;width:100%;max-width:340px">
+        <div style="font-size:14px;font-weight:700;color:#1a5fa8;margin-bottom:10px">📋 Photo Links</div>
+        <textarea style="width:100%;height:150px;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-size:11px;font-family:inherit;resize:none" readonly>${text}</textarea>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+          <button onclick="this.closest('div[style]').remove()" style="background:#f1f5f9;border:none;border-radius:10px;padding:10px;font-size:13px;cursor:pointer;font-family:inherit">Close</button>
+          <button onclick="navigator.clipboard.writeText(document.querySelector('textarea').value);toast('Copied!')" style="background:#1a5fa8;color:white;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Copy All</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  });
+}
+
+// Share WO PDF via native share or download
+async function shareWOPDF(){
+  const d=getWOForm();
+  // Generate PDF as blob
+  const pdfDoc=exportWOPDFBlob();
+  if(!pdfDoc)return;
+
+  const woNum=d.wo_num||'WO';
+  const filename='KPC-WorkOrder-'+woNum+'.pdf';
+
+  if(navigator.share&&navigator.canShare){
+    try{
+      const blob=pdfDoc.output('blob');
+      const file=new File([blob],filename,{type:'application/pdf'});
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({files:[file],title:'KPC Plumbing Work Order '+woNum});
+        toast('Shared! ✅');
+        return;
+      }
+    }catch(e){console.log('Share failed, falling back to download');}
+  }
+  // Fallback - just download
+  pdfDoc.save(filename);
+  toast('PDF saved to Downloads — share from there!');
 }
 
 </script>
