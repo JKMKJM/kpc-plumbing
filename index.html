@@ -159,7 +159,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
 .pay-method-btn{padding:6px 12px;border:1px solid #e2e8f0;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;background:#f8fafc;color:#64748b;font-family:inherit}
 .pay-method-btn.active{background:#1a5fa8;color:white;border-color:#1a5fa8}
 /* Photos */
-.photos-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+.photos-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px;max-height:none}
 .photo-thumb{aspect-ratio:1;border-radius:8px;overflow:hidden;position:relative;background:#f1f5f9;cursor:pointer}
 .photo-thumb img{width:100%;height:100%;object-fit:cover}
 .photo-del{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.6);color:white;border:none;border-radius:999px;width:22px;height:22px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center}
@@ -182,6 +182,52 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
 </style>
 </head>
 <body>
+<!-- PIN LOCK SCREEN -->
+<div id="pin-screen" style="position:fixed;inset:0;background:linear-gradient(135deg,#1a5fa8,#0d3d6e);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px">
+  <div style="text-align:center;color:white;margin-bottom:32px">
+    <div style="font-size:48px;margin-bottom:10px">🔧</div>
+    <div style="font-size:24px;font-weight:800;letter-spacing:1px">KPC PLUMBING</div>
+    <div style="font-size:13px;opacity:.7;margin-top:4px">Licensed · Bonded · Insured</div>
+  </div>
+  <div style="background:rgba(255,255,255,.1);border-radius:20px;padding:28px 24px;width:100%;max-width:320px;backdrop-filter:blur(10px)">
+    <div style="text-align:center;font-size:15px;color:white;font-weight:600;margin-bottom:20px">Enter PIN to access</div>
+    <!-- PIN dots display -->
+    <div id="pin-dots" style="display:flex;justify-content:center;gap:14px;margin-bottom:24px">
+      <div class="pin-dot" id="dot1"></div>
+      <div class="pin-dot" id="dot2"></div>
+      <div class="pin-dot" id="dot3"></div>
+      <div class="pin-dot" id="dot4"></div>
+    </div>
+    <!-- Error message -->
+    <div id="pin-error" style="text-align:center;color:#fca5a5;font-size:13px;margin-bottom:12px;min-height:18px"></div>
+    <!-- Number pad -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+      <button class="pin-btn" onclick="pinPress('1')">1</button>
+      <button class="pin-btn" onclick="pinPress('2')">2</button>
+      <button class="pin-btn" onclick="pinPress('3')">3</button>
+      <button class="pin-btn" onclick="pinPress('4')">4</button>
+      <button class="pin-btn" onclick="pinPress('5')">5</button>
+      <button class="pin-btn" onclick="pinPress('6')">6</button>
+      <button class="pin-btn" onclick="pinPress('7')">7</button>
+      <button class="pin-btn" onclick="pinPress('8')">8</button>
+      <button class="pin-btn" onclick="pinPress('9')">9</button>
+      <div></div>
+      <button class="pin-btn" onclick="pinPress('0')">0</button>
+      <button class="pin-btn pin-del" onclick="pinDelete()">⌫</button>
+    </div>
+  </div>
+  <div style="color:rgba(255,255,255,.4);font-size:11px;margin-top:20px">KPC Plumbing · 409.553.9241</div>
+</div>
+
+<style>
+.pin-dot{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.5);background:transparent;transition:.2s}
+.pin-dot.filled{background:white;border-color:white}
+.pin-btn{background:rgba(255,255,255,.15);border:none;border-radius:12px;color:white;font-size:22px;font-weight:600;padding:16px;cursor:pointer;font-family:inherit;transition:.1s;-webkit-tap-highlight-color:transparent}
+.pin-btn:active{background:rgba(255,255,255,.35);transform:scale(.95)}
+.pin-del{font-size:18px}
+</style>
+
+
 <div class="app">
   <div class="header">
     <div class="header-logo-wrap" onclick="document.getElementById('logo-file').click()">
@@ -197,7 +243,7 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
     </div>
   </div>
   <input type="file" id="logo-file" accept="image/*" style="display:none" onchange="changeLogo(this)">
-  <input type="file" id="wo-photo-file" accept="image/*" capture="camera" style="display:none" onchange="handleWOPhotos(this)">
+  <input type="file" id="wo-photo-file" accept="image/*" capture="camera" multiple style="display:none" onchange="handleWOPhotos(this)">
 <input type="file" id="wo-gallery-file" accept="image/*" multiple style="display:none" onchange="handleWOPhotos(this)">
 
   <div class="tabs">
@@ -872,6 +918,12 @@ a[href^="tel"]{cursor:pointer;-webkit-touch-callout:default}
       <div class="field"><label>Address</label><textarea id="setting-biz-addr" placeholder="Address, City, State, Zip" style="width:100%;padding:9px 11px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit;resize:vertical;min-height:60px"></textarea></div>
       <button class="pg-main-btn" onclick="saveBizSettings()">💾 Save Business Info</button>
     </div>
+    <div class="card">
+      <div class="card-title">App Security</div>
+      <p style="font-size:13px;color:#64748b;margin-bottom:12px">Change the PIN required to access the app. Default PIN is <strong>1234</strong> — change it now!</p>
+      <button class="pg-main-btn" onclick="changePIN()" style="background:#dc2626">🔒 Change PIN</button>
+    </div>
+
     <div class="card">
       <div class="card-title">App Info</div>
       <div style="font-size:13px;color:#64748b;line-height:1.8">
@@ -2980,6 +3032,9 @@ function exportWOPDF(){
 // woPhotos stores {url, path, localSrc} objects
 function handleWOPhotos(input){
   const files=Array.from(input.files);
+  if(woPhotos.length+files.length>20){
+    toast('Maximum 20 photos per work order');
+  }
   files.forEach(file=>{
     // Show preview immediately while uploading
     const r=new FileReader();
@@ -7543,6 +7598,91 @@ async function shareWOPDF(){
   pdfDoc.save(filename);
   toast('PDF saved to Downloads — share from there!');
 }
+
+
+// ============================================================
+// PIN LOCK SYSTEM
+// ============================================================
+const DEFAULT_PIN = '1234';
+let pinEntry = '';
+let pinLocked = true;
+
+function initPIN(){
+  // Check if already unlocked this session
+  if(sessionStorage.getItem('kpc_unlocked')==='true'){
+    document.getElementById('pin-screen').style.display='none';
+    pinLocked=false;
+    return;
+  }
+  // Show PIN screen
+  document.getElementById('pin-screen').style.display='flex';
+}
+
+function pinPress(num){
+  if(pinEntry.length>=4)return;
+  pinEntry+=num;
+  updatePinDots();
+  if(pinEntry.length===4){
+    setTimeout(checkPIN,100);
+  }
+}
+
+function pinDelete(){
+  pinEntry=pinEntry.slice(0,-1);
+  updatePinDots();
+  document.getElementById('pin-error').textContent='';
+}
+
+function updatePinDots(){
+  for(let i=1;i<=4;i++){
+    const dot=document.getElementById('dot'+i);
+    if(dot)dot.classList.toggle('filled',i<=pinEntry.length);
+  }
+}
+
+function checkPIN(){
+  const savedPin=localStorage.getItem('kpc_pin')||DEFAULT_PIN;
+  if(pinEntry===savedPin){
+    // Correct PIN
+    sessionStorage.setItem('kpc_unlocked','true');
+    pinLocked=false;
+    const screen=document.getElementById('pin-screen');
+    screen.style.transition='opacity .3s';
+    screen.style.opacity='0';
+    setTimeout(()=>{screen.style.display='none';},300);
+  } else {
+    // Wrong PIN
+    document.getElementById('pin-error').textContent='Incorrect PIN — try again';
+    pinEntry='';
+    updatePinDots();
+    // Shake animation
+    const dots=document.getElementById('pin-dots');
+    dots.style.animation='none';
+    dots.style.transform='translateX(-8px)';
+    setTimeout(()=>{
+      dots.style.transition='transform .1s';
+      dots.style.transform='translateX(8px)';
+      setTimeout(()=>{dots.style.transform='translateX(0)';},100);
+    },100);
+  }
+}
+
+function changePIN(){
+  const current=prompt('Enter current PIN:');
+  const savedPin=localStorage.getItem('kpc_pin')||DEFAULT_PIN;
+  if(current!==savedPin){toast('Incorrect current PIN');return;}
+  const newPin=prompt('Enter new PIN (4 digits):');
+  if(!newPin||!/^\d{4}$/.test(newPin)){toast('PIN must be exactly 4 digits');return;}
+  const confirm=prompt('Confirm new PIN:');
+  if(newPin!==confirm){toast('PINs do not match');return;}
+  localStorage.setItem('kpc_pin',newPin);
+  toast('PIN changed successfully! ✅');
+}
+
+// Initialize PIN on load
+window.addEventListener('load',()=>{
+  initPIN();
+});
 
 </script>
 </body>
