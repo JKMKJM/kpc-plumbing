@@ -7608,13 +7608,16 @@ let pinEntry = '';
 let pinLocked = true;
 
 function initPIN(){
-  // Check if already unlocked this session
-  if(sessionStorage.getItem('kpc_unlocked')==='true'){
+  // Check if unlocked within last 8 hours
+  const unlockTime=localStorage.getItem('kpc_unlock_time');
+  const eightHours=8*60*60*1000;
+  if(unlockTime&&(Date.now()-parseInt(unlockTime))<eightHours){
     document.getElementById('pin-screen').style.display='none';
     pinLocked=false;
     return;
   }
   // Show PIN screen
+  localStorage.removeItem('kpc_unlock_time');
   document.getElementById('pin-screen').style.display='flex';
 }
 
@@ -7643,8 +7646,8 @@ function updatePinDots(){
 function checkPIN(){
   const savedPin=localStorage.getItem('kpc_pin')||DEFAULT_PIN;
   if(pinEntry===savedPin){
-    // Correct PIN
-    sessionStorage.setItem('kpc_unlocked','true');
+    // Correct PIN — store unlock time
+    localStorage.setItem('kpc_unlock_time',Date.now().toString());
     pinLocked=false;
     const screen=document.getElementById('pin-screen');
     screen.style.transition='opacity .3s';
