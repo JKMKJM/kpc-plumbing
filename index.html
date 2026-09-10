@@ -7607,7 +7607,9 @@ const DEFAULT_PIN = '1234';
 let pinEntry = '';
 let pinLocked = true;
 
-function initPIN(){
+async function initPIN(){
+  // Load latest PIN from cloud first
+  await loadPINFromCloud();
   // Check if unlocked within last 8 hours
   const unlockTime=localStorage.getItem('kpc_unlock_time');
   const eightHours=8*60*60*1000;
@@ -7670,16 +7672,34 @@ function checkPIN(){
   }
 }
 
-function changePIN(){
+async function changePIN(){
   const current=prompt('Enter current PIN:');
   const savedPin=localStorage.getItem('kpc_pin')||DEFAULT_PIN;
   if(current!==savedPin){toast('Incorrect current PIN');return;}
   const newPin=prompt('Enter new PIN (4 digits):');
   if(!newPin||!/^\d{4}$/.test(newPin)){toast('PIN must be exactly 4 digits');return;}
-  const confirm=prompt('Confirm new PIN:');
-  if(newPin!==confirm){toast('PINs do not match');return;}
+  const confirmPin=prompt('Confirm new PIN:');
+  if(newPin!==confirmPin){toast('PINs do not match');return;}
+  // Save to localStorage AND Supabase
   localStorage.setItem('kpc_pin',newPin);
-  toast('PIN changed successfully! ✅');
+  try{
+    await sb.from('settings').upsert({
+      setting_key:'app_pin',
+      setting_value:newPin
+    },{onConflict:'setting_key'});
+    toast('PIN changed and synced to all devices! ✅');
+  }catch(e){
+    toast('PIN changed locally — check connection to sync');
+  }
+}
+
+async function loadPINFromCloud(){
+  try{
+    const{data}=await sb.from('settings').select('setting_value').eq('setting_key','app_pin').single();
+    if(data&&data.setting_value){
+      localStorage.setItem('kpc_pin',data.setting_value);
+    }
+  }catch(e){} // silently fail - use local PIN
 }
 
 // Initialize PIN on load
